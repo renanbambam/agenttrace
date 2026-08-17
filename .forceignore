@@ -1,0 +1,6 @@
+# Arquivos de tooling do LWC que não são metadata deployável
+**/jsconfig.json
+**/.eslintrc.json
+
+# Testes Jest do LWC (rodam localmente, não vão pro org)
+**/__tests__/**

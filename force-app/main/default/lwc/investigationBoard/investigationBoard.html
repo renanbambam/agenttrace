@@ -1,0 +1,26 @@
+<template>
+    <lightning-card title="AgentTrace — Mapa de investigação" icon-name="utility:search">
+        <div class="slds-p-around_medium">
+            <lightning-button
+                label="Iniciar investigação (demo)"
+                variant="brand"
+                onclick={handleStart}>
+            </lightning-button>
+
+            <div class="at-map slds-p-top_medium">
+                <template for:each={decoratedNodes} for:item="node">
+                    <div key={node.key} class={node.cssClass}>
+                        <span class="at-node__label">{node.label}</span>
+                    </div>
+                </template>
+            </div>
+
+            <template lwc:if={hasSummary}>
+                <div class="at-summary slds-p-around_medium slds-m-top_medium">
+                    <p class="slds-text-title_caps slds-m-bottom_x-small">Conclusão</p>
+                    <p>{summaryText}</p>
+                </div>
+            </template>
+        </div>
+    </lightning-card>
+</template>

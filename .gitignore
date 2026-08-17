@@ -1,4 +1,5 @@
 .sfdx/
+.sf/
 referencia/
 node_modules/
 .env

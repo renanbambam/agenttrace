@@ -1,0 +1,56 @@
+.at-map {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.at-node {
+    flex: 1 1 180px;
+    min-height: 90px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 1rem;
+    border-radius: 0.75rem;
+    border: 2px solid #c9c9c9;
+    background: #f4f6f9;
+    color: #4a4a4a;
+    font-weight: 600;
+    transition: all 0.4s ease;
+}
+
+/* idle usa o padrão acima (neutro) */
+
+.at-node_checking {
+    border-color: #1b96ff;
+    color: #032d60;
+    background: #eaf5ff;
+    animation: at-pulse 1s ease-in-out infinite;
+}
+
+.at-node_cleared {
+    opacity: 0.4;
+    border-style: dashed;
+    text-decoration: line-through;
+}
+
+.at-node_hit {
+    border-color: #2e844a;
+    background: #ebf7ed;
+    color: #194e31;
+    box-shadow: 0 0 0 4px rgba(46, 132, 74, 0.25);
+}
+
+@keyframes at-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(27, 150, 255, 0.5); }
+    70%  { box-shadow: 0 0 0 12px rgba(27, 150, 255, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(27, 150, 255, 0); }
+}
+
+.at-summary {
+    border: 1px solid #d8dde6;
+    border-left: 4px solid #2e844a;
+    border-radius: 0.5rem;
+    background: #fbfbfb;
+}
