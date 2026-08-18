@@ -1,24 +1,37 @@
 /**
  * Ponto de entrada da investigação, chamado pela tela (LWC).
  *
- * No esqueleto, startDemo() dispara uma sequência FICTÍCIA de passos só para
- * validar o cano ponta-a-ponta (Apex publica -> barramento -> tela reage).
- * Devolve o investigationId para a tela filtrar os eventos que são dela.
+ * start(incident): a investigação REAL, guiada pela Claude (loop de raciocínio).
+ * startDemo(): a sequência fixa antiga (mantida como comparação).
+ * Ambas devolvem o investigationId para a tela filtrar os eventos que são dela.
  */
 public with sharing class InvestigationController {
 
+    /** Investigação real: a Claude decide os passos a partir do texto do incidente. */
+    @AuraEnabled
+    public static String start(String incident) {
+        if (String.isBlank(incident)) {
+            throw new AuraHandledException('Descreva o incidente antes de investigar.');
+        }
+        return InvestigationOrchestrator.start(incident);
+    }
+
+    /** Demo fixa (não usa Claude): pulsa/acende os nós numa sequência pré-definida. */
     @AuraEnabled
     public static String startDemo() {
         String investigationId = 'demo-' + String.valueOf(DateTime.now().getTime());
 
+        CapabilityResult jobs = new FailedJobsCapability().run();
+        CapabilityResult config = new ConfigChangesCapability().run();
+
         List<InvestigationStepPublisher.StepDef> steps =
             new List<InvestigationStepPublisher.StepDef>{
                 new InvestigationStepPublisher.StepDef('node_pulse', 'Jobs assíncronos'),
-                new InvestigationStepPublisher.StepDef('node_clear', 'Jobs assíncronos'),
+                new InvestigationStepPublisher.StepDef(jobs.suspect ? 'node_hit' : 'node_clear', 'Jobs assíncronos'),
                 new InvestigationStepPublisher.StepDef('node_pulse', 'Config recente'),
-                new InvestigationStepPublisher.StepDef('node_hit',   'Config recente'),
+                new InvestigationStepPublisher.StepDef(config.suspect ? 'node_hit' : 'node_clear', 'Config recente'),
                 new InvestigationStepPublisher.StepDef('summary',
-                    'Mudança de config recente bate com o horário do problema.')
+                    'Achados reais — ' + jobs.message + ' ' + config.message)
             };
 
         System.enqueueJob(new InvestigationStepPublisher(investigationId, steps, 0));

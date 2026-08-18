@@ -1,18 +1,115 @@
 <template>
-    <lightning-card title="AgentTrace — Mapa de investigação" icon-name="utility:search">
+    <lightning-card title="AgentTrace — Investigador" icon-name="utility:search">
         <div class="slds-p-around_medium">
-            <lightning-button
-                label="Iniciar investigação (demo)"
-                variant="brand"
-                onclick={handleStart}>
-            </lightning-button>
+            <lightning-textarea
+                name="incident"
+                label="Descreva o incidente"
+                placeholder="Ex.: O cálculo de desconto está saindo errado para pedidos de exatamente R$ 100."
+                value={incidentText}
+                onchange={handleIncidentChange}>
+            </lightning-textarea>
 
-            <div class="at-map slds-p-top_medium">
-                <template for:each={decoratedNodes} for:item="node">
-                    <div key={node.key} class={node.cssClass}>
-                        <span class="at-node__label">{node.label}</span>
+            <div class="slds-m-top_small">
+                <lightning-button
+                    label="Investigar"
+                    variant="brand"
+                    disabled={investigateDisabled}
+                    onclick={handleInvestigate}>
+                </lightning-button>
+            </div>
+
+            <!-- Tela do agente (em cima) -->
+            <div class="slds-m-top_medium">
+                <p class="at-section-title">Tela do agente</p>
+                <template lwc:if={hasScreen}>
+                    <div class="at-screen">
+                        <div class="at-screen__bar">
+                            <span class="at-screen__dot"></span>
+                            <span class="at-screen__dot"></span>
+                            <span class="at-screen__dot"></span>
+                            <span class="at-screen__title">{screen.title}</span>
+                        </div>
+                        <div class="at-screen__body">
+                            <template for:each={screenLines} for:item="ln">
+                                <div key={ln.key} class="at-code__line">
+                                    <span class="at-code__num">{ln.num}</span>
+                                    <span class="at-code__text">
+                                        <template for:each={ln.tokens} for:item="t">
+                                            <span key={t.key} class={t.cls}>{t.text}</span>
+                                        </template>
+                                        <template lwc:if={ln.showCursor}>
+                                            <span class="at-caret"></span>
+                                        </template>
+                                    </span>
+                                </div>
+                            </template>
+                            <template lwc:if={hasConsole}>
+                                <div class="at-console">{screen.console}</div>
+                            </template>
+                        </div>
                     </div>
                 </template>
+                <template lwc:else>
+                    <div class="at-screen at-screen_idle">
+                        <div class="at-screen__placeholder">
+                            🖥️ Quando o agente abrir um arquivo ou rodar um teste, você vê acontecer aqui — ao vivo.
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Linha do tempo (embaixo) -->
+            <div class="slds-m-top_medium">
+                <p class="at-section-title">Linha do tempo da investigação</p>
+                <div class="at-timeline">
+                    <template lwc:if={hasTimeline}>
+                        <template for:each={renderTimeline} for:item="entry">
+                            <div key={entry.key} class="at-tl-item">
+                                <span class="at-tl-rail"></span>
+                                <span class="at-tl-dot">{entry.icon}</span>
+                                <div class="at-tl-body">
+                                    <template lwc:if={entry.isText}>{entry.text}</template>
+                                    <template lwc:if={entry.isCode}>
+                                        <div class="at-code">
+                                            <button class="at-code__bar" data-key={entry.key}
+                                                onclick={handleToggleCode}>
+                                                <span class="at-code__caret">{entry.caret}</span>
+                                                <span class="at-code__file">{entry.file}</span>
+                                            </button>
+                                            <template lwc:if={entry.open}>
+                                                <div class="at-code__body">
+                                                    <template for:each={entry.lines} for:item="ln">
+                                                        <div key={ln.key} class="at-code__line">
+                                                            <span class="at-code__num">{ln.num}</span>
+                                                            <span class="at-code__text">
+                                                                <template for:each={ln.tokens} for:item="t">
+                                                                    <span key={t.key} class={t.cls}>{t.text}</span>
+                                                                </template>
+                                                            </span>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+                                    <template lwc:if={entry.isConsole}>
+                                        <div class="at-console">{entry.text}</div>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                        <template lwc:if={isRunning}>
+                            <div class="at-tl-item">
+                                <span class="at-tl-rail"></span>
+                                <span class="at-tl-dot at-tl-dot_live">•</span>
+                                <div class="at-tl-body at-tl-body_live">raciocinando…</div>
+                            </div>
+                        </template>
+                    </template>
+                    <template lwc:else>
+                        <p class="at-timeline__empty">Descreva um incidente e clique em Investigar — cada passo do raciocínio aparece aqui.</p>
+                    </template>
+                </div>
             </div>
 
             <template lwc:if={hasSummary}>
@@ -21,6 +118,47 @@
                     <p>{summaryText}</p>
                 </div>
             </template>
+
+            <template lwc:if={hasFix}>
+                <div class="at-fix slds-p-around_medium slds-m-top_medium">
+                    <div class="at-fix__head">
+                        <span class="at-fix__badge">Correção proposta</span>
+                        <span class="at-fix__file">{fix.classe}</span>
+                    </div>
+                    <div class="at-fix__diff">
+                        <div class="at-fix__line at-fix__line_del">
+                            <span class="at-fix__sign">-</span><span>{fix.de}</span>
+                        </div>
+                        <div class="at-fix__line at-fix__line_add">
+                            <span class="at-fix__sign">+</span><span>{fix.para}</span>
+                        </div>
+                    </div>
+                    <p class="at-fix__why">{fix.porque}</p>
+
+                    <template lwc:if={fixPending}>
+                        <div class="at-fix__actions">
+                            <lightning-button label="Autorizar correção" variant="brand"
+                                onclick={handleAuthorize}></lightning-button>
+                            <lightning-button label="Recusar" variant="neutral"
+                                class="slds-m-left_x-small" onclick={handleReject}></lightning-button>
+                        </div>
+                        <p class="at-fix__note">O agente propõe — nada é aplicado sem a sua autorização.</p>
+                    </template>
+                    <template lwc:if={fixAuthorized}>
+                        <p class="at-fix__decided at-fix__decided_ok">✅ Correção autorizada por você. Pronta para ser aplicada por um deploy — o agente não aplica sozinho.</p>
+                    </template>
+                    <template lwc:if={fixRejected}>
+                        <p class="at-fix__decided at-fix__decided_no">✋ Correção recusada. Nada foi alterado.</p>
+                    </template>
+                </div>
+            </template>
+
+            <p class="at-section-title slds-m-top_medium">Capacidades</p>
+            <div class="at-map">
+                <template for:each={decoratedNodes} for:item="node">
+                    <div key={node.key} class={node.cssClass}>{node.label}</div>
+                </template>
+            </div>
         </div>
     </lightning-card>
 </template>
