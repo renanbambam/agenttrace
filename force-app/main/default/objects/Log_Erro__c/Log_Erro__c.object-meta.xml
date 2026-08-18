@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <deploymentStatus>Deployed</deploymentStatus>
+    <description>Log de erros da aplicação — alvo de investigação do AgentTrace (capacidade log_erro).</description>
+    <enableActivities>false</enableActivities>
+    <enableHistory>false</enableHistory>
+    <enableReports>true</enableReports>
+    <enableSearch>true</enableSearch>
+    <label>Log de Erro</label>
+    <pluralLabel>Logs de Erro</pluralLabel>
+    <nameField>
+        <displayFormat>LOG-{00000}</displayFormat>
+        <label>Nº do Log</label>
+        <type>AutoNumber</type>
+    </nameField>
+    <sharingModel>ReadWrite</sharingModel>
+</CustomObject>

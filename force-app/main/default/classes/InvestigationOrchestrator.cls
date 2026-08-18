@@ -19,7 +19,7 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         'ClaudeService', 'InvestigationOrchestrator', 'InvestigationController',
         'InvestigationCapability', 'CapabilityRegistry', 'CapabilityResult',
         'FailedJobsCapability', 'ConfigChangesCapability', 'InvestigationStepPublisher',
-        'ToolingService'
+        'ToolingService', 'ErrorLogCapability'
     };
 
     private final String investigationId;
@@ -241,6 +241,7 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
     }
 
     // Traduz a exceção da sonda em ONDE está o problema (dentro do org vs fora).
+    @TestVisible
     private static String localizeIntegration(String exc) {
         String m = (exc == null ? '' : exc).toLowerCase();
         if (m.contains('unauthorized endpoint') || m.contains('remote site')) {
@@ -305,6 +306,11 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
     // --- Publicação de eventos ---
 
     private void enqueueNext() {
+        // Em teste, encadear Queueable não é permitido pela plataforma; pulamos.
+        // Em produção, é isto que faz o loop avançar passo a passo.
+        if (Test.isRunningTest()) {
+            return;
+        }
         System.enqueueJob(
             new InvestigationOrchestrator(investigationId, incident, findings, iteration + 1)
         );

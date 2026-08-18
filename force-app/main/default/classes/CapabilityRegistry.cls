@@ -37,6 +37,14 @@ public with sharing class CapabilityRegistry {
                 'Use quando o problema começou depois de alguém mexer em permissão ou configuração.'
             ),
             new CapabilityInfo(
+                'log_erro',
+                'Log de erro',
+                'Lê os erros já REGISTRADOS no log da aplicação (objeto Log_Erro__c, últimos 7 dias). ' +
+                'Use quando algo "parou" ou "deu erro" e você quer ver o que foi registrado antes de ' +
+                'agir — inclusive falhas de integração. Se os logs mostram rede/proxy externo (407, ' +
+                'timeout, DNS) de forma recorrente, isso é FORA do seu alcance. Não precisa de alvo.'
+            ),
+            new CapabilityInfo(
                 'listar_classes',
                 '',
                 'Lista as classes Apex do org (código de negócio) que podem ser inspecionadas. ' +
@@ -76,6 +84,9 @@ public with sharing class CapabilityRegistry {
         }
         if (name == 'config_recente') {
             return new ConfigChangesCapability();
+        }
+        if (name == 'log_erro') {
+            return new ErrorLogCapability();
         }
         return null;
     }

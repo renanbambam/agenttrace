@@ -42,7 +42,7 @@ public with sharing class InvestigationStepPublisher implements Queueable {
         ));
 
         Integer next = index + 1;
-        if (next < steps.size()) {
+        if (next < steps.size() && !Test.isRunningTest()) {
             System.enqueueJob(new InvestigationStepPublisher(investigationId, steps, next));
         }
     }

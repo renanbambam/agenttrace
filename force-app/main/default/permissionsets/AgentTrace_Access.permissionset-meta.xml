@@ -14,6 +14,30 @@
         <externalCredentialPrincipal>OrgTooling-ToolingPrincipal</externalCredentialPrincipal>
         <enabled>true</enabled>
     </externalCredentialPrincipalAccesses>
+    <objectPermissions>
+        <object>Log_Erro__c</object>
+        <allowRead>true</allowRead>
+        <allowCreate>false</allowCreate>
+        <allowEdit>false</allowEdit>
+        <allowDelete>false</allowDelete>
+        <viewAllRecords>true</viewAllRecords>
+        <modifyAllRecords>false</modifyAllRecords>
+    </objectPermissions>
+    <fieldPermissions>
+        <field>Log_Erro__c.Origem__c</field>
+        <readable>true</readable>
+        <editable>false</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Log_Erro__c.Nivel__c</field>
+        <readable>true</readable>
+        <editable>false</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Log_Erro__c.Mensagem__c</field>
+        <readable>true</readable>
+        <editable>false</editable>
+    </fieldPermissions>
     <tabSettings>
         <tab>AgentTrace_Board</tab>
         <visibility>Visible</visibility>
