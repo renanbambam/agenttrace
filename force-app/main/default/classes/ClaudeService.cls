@@ -72,7 +72,49 @@ public with sharing class ClaudeService {
         return parseDecision(raw);
     }
 
+    /**
+     * Gera um Apex anônimo que PROVA que uma correção funciona: implementa a lógica
+     * JÁ CORRIGIDA inline e faz System.assertEquals do valor correto. Se a correção
+     * funciona, o teste passa. Usado quando o humano autoriza a correção proposta.
+     */
+    public static String gerarVerificacao(String correcaoJson) {
+        Map<String, Object> c = (Map<String, Object>) JSON.deserializeUntyped(correcaoJson);
+        String systemPrompt =
+            'Você gera UM bloco curto de Apex anônimo que PROVA que uma correção de código funciona. '
+            + 'Responda APENAS com o código Apex, sem markdown, sem cercas, sem explicação. '
+            + 'O código deve implementar a LÓGICA CORRIGIDA inline (NÃO chame a classe original, que ainda '
+            + 'tem o bug) e usar System.assertEquals com o valor CORRETO esperado, de modo que, se a correção '
+            + 'funciona, o teste passa. É só verificação de leitura; NUNCA faça DML.';
+        String userMsg =
+            'Classe: ' + c.get('classe') + '\n'
+            + 'Trecho com bug (de): ' + c.get('de') + '\n'
+            + 'Trecho corrigido (para): ' + c.get('para') + '\n'
+            + 'Por que corrige: ' + c.get('porque') + '\n\n'
+            + 'Gere o Apex anônimo que prova, executando, que a versão corrigida passa.';
+
+        String raw = callClaude(systemPrompt, new List<Object>{
+            new Map<String, Object>{ 'role' => 'user', 'content' => userMsg }
+        });
+        return stripCodeFences(raw);
+    }
+
     // --- helpers ---
+
+    /** Remove cercas de markdown (```apex ... ```) se a Claude escorregar e mandar. */
+    private static String stripCodeFences(String raw) {
+        String cleaned = raw == null ? '' : raw.trim();
+        if (cleaned.startsWith('```')) {
+            Integer firstBreak = cleaned.indexOf('\n');
+            if (firstBreak > -1) {
+                cleaned = cleaned.substring(firstBreak + 1);
+            }
+            if (cleaned.endsWith('```')) {
+                cleaned = cleaned.substring(0, cleaned.length() - 3);
+            }
+            cleaned = cleaned.trim();
+        }
+        return cleaned;
+    }
 
     private static String buildSystemPrompt() {
         String caps = '';

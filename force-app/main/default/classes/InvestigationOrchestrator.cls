@@ -19,7 +19,7 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         'ClaudeService', 'InvestigationOrchestrator', 'InvestigationController',
         'InvestigationCapability', 'CapabilityRegistry', 'CapabilityResult',
         'FailedJobsCapability', 'ConfigChangesCapability', 'InvestigationStepPublisher',
-        'ToolingService', 'ErrorLogCapability'
+        'ToolingService', 'ErrorLogCapability', 'FixValidator'
     };
 
     private final String investigationId;

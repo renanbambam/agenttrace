@@ -1,6 +1,7 @@
 import { LightningElement } from 'lwc';
 import { subscribe, unsubscribe, onError } from 'lightning/empApi';
 import startInvestigation from '@salesforce/apex/InvestigationController.start';
+import validarCorrecao from '@salesforce/apex/InvestigationController.validarCorrecao';
 
 const NODE_LABELS = ['Jobs assíncronos', 'Log de erro', 'Config recente', 'Integração externa'];
 
@@ -44,8 +45,12 @@ export default class InvestigationBoard extends LightningElement {
     get hasConsole() { return !!this.screen.console; }
     get hasFix() { return !!this.fix; }
     get fixPending() { return this.fix && !this.fix.decided; }
-    get fixAuthorized() { return this.fix && this.fix.decided && this.fix.authorized; }
     get fixRejected() { return this.fix && this.fix.decided && !this.fix.authorized; }
+    get fixValidating() { return this.fix && this.fix.authorized && this.fix.validating; }
+    get fixValidatedOk() { return this.fix && this.fix.authorized && this.fix.validated === true; }
+    get fixValidatedFail() {
+        return this.fix && this.fix.authorized && this.fix.validated === false && !this.fix.validating;
+    }
     get investigateDisabled() {
         return this.isRunning || !this.incidentText || this.incidentText.trim().length === 0;
     }
@@ -138,6 +143,13 @@ export default class InvestigationBoard extends LightningElement {
             return;
         }
         if (type === 'fix') { this.showFix(p.Payload__c); return; }
+        if (type === 'fix_validated') {
+            if (this.fix) {
+                this.fix = { ...this.fix, validating: false,
+                    validated: (p.Message__c === 'ok'), validatedText: p.Payload__c };
+            }
+            return;
+        }
         if (type === 'summary') {
             this.pushStep('conclusao', p.Payload__c);
             this.summaryText = p.Payload__c;
@@ -219,7 +231,10 @@ export default class InvestigationBoard extends LightningElement {
                 para: c.para || '',
                 porque: c.porque || '',
                 decided: false,
-                authorized: false
+                authorized: false,
+                validating: false,
+                validated: null,
+                validatedText: ''
             };
         } catch (e) {
             // Se vier malformado, não bloqueia a conclusão; só não mostra o diff.
@@ -227,7 +242,20 @@ export default class InvestigationBoard extends LightningElement {
         }
     }
 
-    handleAuthorize() { this.fix = { ...this.fix, decided: true, authorized: true }; }
+    handleAuthorize() {
+        // Autorizado: valida a correção AO VIVO (o backend roda a lógica corrigida).
+        this.fix = { ...this.fix, decided: true, authorized: true,
+            validating: true, validated: null, validatedText: '' };
+        const correcao = JSON.stringify({
+            classe: this.fix.classe, de: this.fix.de, para: this.fix.para, porque: this.fix.porque
+        });
+        validarCorrecao({ investigationId: this.investigationId, correcaoJson: correcao })
+            .catch((e) => {
+                this.fix = { ...this.fix, validating: false, validated: false,
+                    validatedText: 'Não consegui iniciar a validação: ' + this.errMsg(e) };
+            });
+    }
+
     handleReject() { this.fix = { ...this.fix, decided: true, authorized: false }; }
 
     handleIncidentChange(event) { this.incidentText = event.target.value; }

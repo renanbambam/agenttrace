@@ -144,8 +144,14 @@
                         </div>
                         <p class="at-fix__note">O agente propõe — nada é aplicado sem a sua autorização.</p>
                     </template>
-                    <template lwc:if={fixAuthorized}>
-                        <p class="at-fix__decided at-fix__decided_ok">✅ Correção autorizada por você. Pronta para ser aplicada por um deploy — o agente não aplica sozinho.</p>
+                    <template lwc:if={fixValidating}>
+                        <p class="at-fix__decided at-fix__decided_ok">⏳ Validando a correção ao vivo — rodando a lógica corrigida…</p>
+                    </template>
+                    <template lwc:if={fixValidatedOk}>
+                        <p class="at-fix__decided at-fix__decided_ok">✅ Correção validada — {fix.validatedText} Aplicar continua sendo a sua decisão; o agente não aplica sozinho.</p>
+                    </template>
+                    <template lwc:if={fixValidatedFail}>
+                        <p class="at-fix__decided at-fix__decided_no">⚠️ {fix.validatedText}</p>
                     </template>
                     <template lwc:if={fixRejected}>
                         <p class="at-fix__decided at-fix__decided_no">✋ Correção recusada. Nada foi alterado.</p>

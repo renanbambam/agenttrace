@@ -49,6 +49,18 @@ private class ClaudeServiceTest {
     }
 
     @isTest
+    static void gerarVerificacao_retornaCodigoSemCerca() {
+        Test.setMock(HttpCalloutMock.class,
+            new AgentTraceHttpMock('```apex\nSystem.assertEquals(10, 10);\n```'));
+        Test.startTest();
+        String apex = ClaudeService.gerarVerificacao(
+            '{"classe":"C","de":"a","para":"b","porque":"c"}');
+        Test.stopTest();
+        System.assert(apex.contains('System.assertEquals'));
+        System.assert(!apex.contains('```'), 'cerca markdown removida');
+    }
+
+    @isTest
     static void ping_retornaTexto() {
         Test.setMock(HttpCalloutMock.class, new AgentTraceHttpMock('pong'));
         Test.startTest();

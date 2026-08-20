@@ -16,6 +16,18 @@ public with sharing class InvestigationController {
         return InvestigationOrchestrator.start(incident);
     }
 
+    /**
+     * Fecha o ciclo: o humano autorizou a correção -> valida ela ao vivo (sem deploy).
+     * Recebe o id da investigação e a correção (JSON: classe, de, para, porque).
+     */
+    @AuraEnabled
+    public static void validarCorrecao(String investigationId, String correcaoJson) {
+        if (String.isBlank(investigationId) || String.isBlank(correcaoJson)) {
+            throw new AuraHandledException('Faltam dados da correção para validar.');
+        }
+        System.enqueueJob(new FixValidator(investigationId, correcaoJson));
+    }
+
     /** Demo fixa (não usa Claude): pulsa/acende os nós numa sequência pré-definida. */
     @AuraEnabled
     public static String startDemo() {
