@@ -39,4 +39,20 @@ private class CapabilitiesTest {
         Test.stopTest();
         System.assertNotEquals(null, r.message);
     }
+
+    @isTest
+    static void orgLimits_executa() {
+        Test.startTest();
+        CapabilityResult r = new OrgLimitsCapability().run();
+        Test.stopTest();
+        System.assertNotEquals(null, r.message);
+    }
+
+    @isTest
+    static void automations_executa() {
+        Test.startTest();
+        CapabilityResult r = new AutomationsCapability().run();
+        Test.stopTest();
+        System.assertNotEquals(null, r.message);
+    }
 }

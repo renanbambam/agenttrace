@@ -47,4 +47,23 @@ public with sharing class ToolingService {
         r.line = (Integer) m.get('line');
         return r;
     }
+
+    /** Baixa o corpo (texto) de um debug log (ApexLog) via Tooling API. */
+    public static String getLogBody(String logId) {
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint(
+            NAMED_CREDENTIAL + '/services/data/' + API_VERSION +
+            '/tooling/sobjects/ApexLog/' + logId + '/Body'
+        );
+        req.setMethod('GET');
+        req.setTimeout(120000);
+
+        HttpResponse res = new Http().send(req);
+        if (res.getStatusCode() != 200) {
+            throw new ToolingException(
+                'Tooling HTTP ' + res.getStatusCode() + ' ao buscar o corpo do log'
+            );
+        }
+        return res.getBody();
+    }
 }

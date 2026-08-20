@@ -124,6 +124,26 @@ private class InvestigationOrchestratorTest {
     }
 
     @isTest
+    static void lerDebugLogs() {
+        runWith('{"acao":"rodar","capacidade":"ler_debug_logs","porque":"x"}');
+    }
+
+    @isTest
+    static void listarAutomacoes() {
+        runWith('{"acao":"rodar","capacidade":"listar_automacoes","porque":"x"}');
+    }
+
+    @isTest
+    static void verificarLimites() {
+        runWith('{"acao":"rodar","capacidade":"verificar_limites","porque":"x"}');
+    }
+
+    @isTest
+    static void consultarDados_privacidade_recusa() {
+        runWith('{"acao":"rodar","capacidade":"consultar_dados","soql":"SELECT Email FROM Contact","porque":"x"}');
+    }
+
+    @isTest
     static void localizeIntegration_classificaTodos() {
         System.assert(InvestigationOrchestrator.localizeIntegration('Unauthorized endpoint').contains('org'));
         System.assert(InvestigationOrchestrator.localizeIntegration('HTTP 407 proxy').toLowerCase().contains('proxy'));

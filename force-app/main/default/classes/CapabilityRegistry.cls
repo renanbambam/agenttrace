@@ -96,7 +96,29 @@ public with sharing class CapabilityRegistry {
                 'amostra. Requer o campo "soql" (deve começar com SELECT — só leitura, nunca modifica). ' +
                 'É a capacidade mais poderosa pra achar o não óbvio: confirma nos DADOS uma hipótese ' +
                 'levantada no código (ex.: quantos registros um bug afetou). Use schema_objeto antes se ' +
-                'não souber os campos.'
+                'não souber os campos. PRIVACIDADE: nunca selecione campos de dado pessoal (email, ' +
+                'telefone, etc.) — o Apex recusa; prefira COUNT/agregado.'
+            ),
+            new CapabilityInfo(
+                'ler_debug_logs',
+                '',
+                'Lê os logs de DEBUG de runtime (ApexLog): as operações recentes e o corpo do log mais ' +
+                'recente (o rastro real da execução). Use pra incidentes de erro em runtime, quando ' +
+                'quer ver o que REALMENTE aconteceu na execução. Não precisa de alvo. (Se não houver ' +
+                'log recente, a trace flag pode estar desligada.)'
+            ),
+            new CapabilityInfo(
+                'listar_automacoes',
+                '',
+                'Lista as automações do org: flows ativos e triggers (onde muita lógica de negócio e bug ' +
+                'silencioso vive). Use quando o incidente pode ser causado por uma automação disparando ' +
+                'algo inesperado. Não precisa de alvo.'
+            ),
+            new CapabilityInfo(
+                'verificar_limites',
+                '',
+                'Verifica se algum limite do org (governor/API/storage/async) está perto do teto (>=80%). ' +
+                'Use no incidente "estava tudo bem e de repente parou de funcionar". Não precisa de alvo.'
             )
         };
     }
@@ -110,6 +132,12 @@ public with sharing class CapabilityRegistry {
         }
         if (name == 'log_erro') {
             return new ErrorLogCapability();
+        }
+        if (name == 'listar_automacoes') {
+            return new AutomationsCapability();
+        }
+        if (name == 'verificar_limites') {
+            return new OrgLimitsCapability();
         }
         return null;
     }

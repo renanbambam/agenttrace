@@ -19,7 +19,14 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         'ClaudeService', 'InvestigationOrchestrator', 'InvestigationController',
         'InvestigationCapability', 'CapabilityRegistry', 'CapabilityResult',
         'FailedJobsCapability', 'ConfigChangesCapability', 'InvestigationStepPublisher',
-        'ToolingService', 'ErrorLogCapability', 'FixValidator'
+        'ToolingService', 'ErrorLogCapability', 'FixValidator',
+        'OrgLimitsCapability', 'AutomationsCapability'
+    };
+
+    // Tokens de dado pessoal (PII) que a consulta de dados NUNCA pode tocar.
+    private static final Set<String> PII_TOKENS = new Set<String>{
+        'email', 'phone', 'mobilephone', 'homephone', 'ssn', 'cpf', 'cnpj', 'rg',
+        'birthdate', 'passport', 'fax', 'mailingstreet', 'personemail', 'personmobilephone'
     };
 
     private final String investigationId;
@@ -114,6 +121,10 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         }
         if (capName == 'consultar_dados') {
             runConsultarDados((String) decision.get('soql'), porque);
+            return;
+        }
+        if (capName == 'ler_debug_logs') {
+            runDebugLogs(porque);
             return;
         }
 
@@ -344,11 +355,24 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
             return;
         }
         String q = soql.trim();
-        if (!q.toLowerCase().startsWith('select')) {
+        String qLower = q.toLowerCase();
+        if (!qLower.startsWith('select')) {
             publishNarration('descartado', 'Recusei uma consulta que não era SELECT — só leitura é permitida.');
             findings.add('consultar_dados: recusado (não-SELECT): ' + q);
             enqueueNext();
             return;
+        }
+
+        // Guarda de PRIVACIDADE: nunca puxa dado pessoal. Conta/agrega, não expõe indivíduos.
+        for (String pii : PII_TOKENS) {
+            if (qLower.contains(pii)) {
+                publishNarration('descartado',
+                    'Recusei por PRIVACIDADE: a consulta tocaria em dado pessoal ("' + pii + '"). ' +
+                    'Eu investigo fundo, mas não acesso dados de pessoas — uso contagem/agregado no lugar.');
+                findings.add('consultar_dados: RECUSADO por privacidade (campo "' + pii + '"). Prefira COUNT()/agregado.');
+                enqueueNext();
+                return;
+            }
         }
 
         publishNarration('decisao', 'Vou consultar os dados reais pra confirmar. ' + safe(porque));
@@ -377,6 +401,55 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
             findings.add('consultar_dados(' + q + '): erro: ' + e.getMessage());
         }
         publishNarration('pensando', 'Analisando os dados…');
+        enqueueNext();
+    }
+
+    // Lê os logs de debug (runtime). SOQL nos ApexLog + baixa o corpo do mais recente (callout).
+    private void runDebugLogs(String porque) {
+        publishNarration('decisao', 'Vou vasculhar os logs de debug do runtime. ' + safe(porque));
+        publishNarration('acao', 'Lendo os logs de execução recentes…');
+
+        List<ApexLog> logs;
+        try {
+            logs = [
+                SELECT Id, Operation, Status, DurationMilliseconds, LogLength, StartTime
+                FROM ApexLog ORDER BY StartTime DESC LIMIT 5
+            ];
+        } catch (Exception e) {
+            publishNarration('descartado', 'Não consegui ler os logs de debug: ' + e.getMessage());
+            findings.add('ler_debug_logs: erro de acesso: ' + e.getMessage());
+            enqueueNext();
+            return;
+        }
+
+        if (logs.isEmpty()) {
+            publishNarration('descartado', 'Nenhum log de debug recente — a trace flag pode estar desligada.');
+            findings.add('ler_debug_logs: nenhum log recente.');
+            enqueueNext();
+            return;
+        }
+
+        // Baixa o corpo do log mais recente (callout PRIMEIRO, depois publica).
+        ApexLog alvo = logs[0];
+        String corpo;
+        try {
+            corpo = ToolingService.getLogBody(alvo.Id);
+        } catch (Exception e) {
+            corpo = '(não consegui baixar o corpo do log: ' + e.getMessage() + ')';
+        }
+
+        List<String> meta = new List<String>();
+        for (ApexLog l : logs) {
+            meta.add(l.Operation + ' [' + l.Status + '] ' + l.DurationMilliseconds + 'ms');
+        }
+        String corpoMostra = (corpo != null && corpo.length() > 4000)
+            ? corpo.substring(0, 4000) + '\n…(truncado)' : corpo;
+
+        publishTest('Debug log: ' + alvo.Operation, corpoMostra);
+        publishNarration('achado', logs.size() + ' log(s) recente(s): ' + String.join(meta, ' | '));
+        String trecho = (corpo != null && corpo.length() > 800) ? corpo.substring(0, 800) : corpo;
+        findings.add('ler_debug_logs: ' + String.join(meta, ' | ') + '. Trecho do mais recente: ' + trecho);
+        publishNarration('pensando', 'Analisando o rastro do runtime…');
         enqueueNext();
     }
 

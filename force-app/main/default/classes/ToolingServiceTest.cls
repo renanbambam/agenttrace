@@ -32,6 +32,15 @@ private class ToolingServiceTest {
         System.assertEquals(true, lancou);
     }
 
+    @isTest
+    static void getLogBody_retornaCorpo() {
+        Test.setMock(HttpCalloutMock.class, new AgentTraceHttpMock('x'));
+        Test.startTest();
+        String body = ToolingService.getLogBody('07Lxx0000000001AAA');
+        Test.stopTest();
+        System.assertNotEquals(null, body);
+    }
+
     private class ToolingErroMock implements HttpCalloutMock {
         public HttpResponse respond(HttpRequest req) {
             HttpResponse res = new HttpResponse();
