@@ -12,7 +12,7 @@
  */
 public with sharing class InvestigationOrchestrator implements Queueable, Database.AllowsCallouts {
 
-    private static final Integer MAX_ITERATIONS = 8;
+    private static final Integer MAX_ITERATIONS = 12;
 
     // Classes internas do próprio agente — não são alvo de investigação.
     private static final Set<String> FRAMEWORK = new Set<String>{
@@ -102,6 +102,18 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         }
         if (capName == 'sondar_integracao') {
             runProbe((String) decision.get('endpoint'), porque);
+            return;
+        }
+        if (capName == 'buscar_no_codigo') {
+            runBuscarCodigo((String) decision.get('termo'), porque);
+            return;
+        }
+        if (capName == 'schema_objeto') {
+            runSchema((String) decision.get('objeto'), porque);
+            return;
+        }
+        if (capName == 'consultar_dados') {
+            runConsultarDados((String) decision.get('soql'), porque);
             return;
         }
 
@@ -257,6 +269,115 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
             return 'é DNS/host inexistente — o endereço externo não resolve; fora do meu alcance.';
         }
         return 'não reconheci o tipo exato — precisa de análise manual da mensagem.';
+    }
+
+    // Grep: procura um termo em TODAS as classes de negócio de uma vez.
+    private void runBuscarCodigo(String termo, String porque) {
+        if (String.isBlank(termo)) {
+            publishNarration('pensando', 'Quis buscar no código mas não defini o termo. Vou seguir.');
+            enqueueNext();
+            return;
+        }
+        publishNarration('decisao', 'Vou procurar "' + termo + '" em todo o código. ' + safe(porque));
+        publishNarration('acao', 'Buscando "' + termo + '" nas classes…');
+
+        String alvo = termo.toLowerCase();
+        List<String> hits = new List<String>();
+        for (ApexClass c : [SELECT Name, Body FROM ApexClass WHERE NamespacePrefix = null]) {
+            if (FRAMEWORK.contains(c.Name) || c.Name.endsWith('Test') || c.Body == null) {
+                continue;
+            }
+            String[] linhas = c.Body.split('\n');
+            for (Integer i = 0; i < linhas.size(); i++) {
+                if (linhas[i].toLowerCase().contains(alvo)) {
+                    hits.add(c.Name + ':' + (i + 1) + '  ' + linhas[i].trim());
+                }
+            }
+        }
+
+        if (hits.isEmpty()) {
+            publishNarration('descartado', 'Não achei "' + termo + '" em nenhuma classe de negócio.');
+            findings.add('buscar_no_codigo(' + termo + '): nenhum resultado.');
+        } else {
+            List<String> mostra = new List<String>();
+            for (Integer i = 0; i < Math.min(12, hits.size()); i++) {
+                mostra.add(hits[i]);
+            }
+            publishNarration('achado', hits.size() + ' ocorrência(s) de "' + termo + '": ' + String.join(mostra, ' | '));
+            findings.add('buscar_no_codigo(' + termo + '): ' + hits.size() + ' ocorrências: ' + String.join(hits, ' | '));
+        }
+        publishNarration('pensando', 'Vendo aonde isso me leva…');
+        enqueueNext();
+    }
+
+    // Descreve os campos (nome + tipo) de um objeto — o modelo de dados.
+    private void runSchema(String objeto, String porque) {
+        if (String.isBlank(objeto)) {
+            publishNarration('pensando', 'Quis ver o schema mas não defini o objeto. Vou seguir.');
+            enqueueNext();
+            return;
+        }
+        publishNarration('decisao', 'Vou ver os campos de "' + objeto + '". ' + safe(porque));
+        Schema.SObjectType t = Schema.getGlobalDescribe().get(objeto);
+        if (t == null) {
+            publishNarration('descartado', 'O objeto "' + objeto + '" não existe neste org.');
+            findings.add('schema_objeto(' + objeto + '): objeto não encontrado.');
+            enqueueNext();
+            return;
+        }
+        List<String> campos = new List<String>();
+        for (Schema.SObjectField f : t.getDescribe().fields.getMap().values()) {
+            Schema.DescribeFieldResult d = f.getDescribe();
+            campos.add(d.getName() + ' (' + d.getType() + ')');
+        }
+        publishNarration('achado', objeto + ' tem ' + campos.size() + ' campos: ' + String.join(campos, ', '));
+        findings.add('schema_objeto(' + objeto + '): ' + String.join(campos, ', '));
+        publishNarration('pensando', 'Agora sei o que posso consultar…');
+        enqueueNext();
+    }
+
+    // Consulta SOQL de LEITURA nos dados reais. Amarra: só SELECT (Database.query nunca faz DML).
+    private void runConsultarDados(String soql, String porque) {
+        if (String.isBlank(soql)) {
+            publishNarration('pensando', 'Quis consultar dados mas não montei a query. Vou seguir.');
+            enqueueNext();
+            return;
+        }
+        String q = soql.trim();
+        if (!q.toLowerCase().startsWith('select')) {
+            publishNarration('descartado', 'Recusei uma consulta que não era SELECT — só leitura é permitida.');
+            findings.add('consultar_dados: recusado (não-SELECT): ' + q);
+            enqueueNext();
+            return;
+        }
+
+        publishNarration('decisao', 'Vou consultar os dados reais pra confirmar. ' + safe(porque));
+        publishTest('Consulta (SOQL)', q);
+        publishNarration('acao', 'Rodando a consulta ao vivo…');
+
+        try {
+            List<SObject> rows = Database.query(q);
+            String amostra = '(sem registros)';
+            if (!rows.isEmpty()) {
+                List<SObject> primeiros = new List<SObject>();
+                for (Integer i = 0; i < Math.min(3, rows.size()); i++) {
+                    primeiros.add(rows[i]);
+                }
+                amostra = JSON.serialize(primeiros);
+                if (amostra.length() > 1500) {
+                    amostra = amostra.substring(0, 1500) + '…';
+                }
+            }
+            publishTestResult('> ' + rows.size() + ' registro(s).\nAmostra: ' + amostra);
+            publishNarration('achado', 'A consulta retornou ' + rows.size() + ' registro(s).');
+            findings.add('consultar_dados(' + q + '): ' + rows.size() + ' registros. Amostra: ' + amostra);
+        } catch (Exception e) {
+            publishTestResult('> Erro na consulta:\n' + e.getMessage());
+            publishNarration('descartado', 'A consulta falhou: ' + e.getMessage());
+            findings.add('consultar_dados(' + q + '): erro: ' + e.getMessage());
+        }
+        publishNarration('pensando', 'Analisando os dados…');
+        enqueueNext();
     }
 
     private void runSignal(InvestigationCapability cap, String capName, String porque) {

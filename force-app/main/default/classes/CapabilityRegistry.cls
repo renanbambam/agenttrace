@@ -74,6 +74,29 @@ public with sharing class CapabilityRegistry {
                 'callout falhando. O resultado te diz se é config no org (ex.: "Unauthorized endpoint" ' +
                 '= endpoint não liberado em Remote Site) ou falha de rede/proxy externo (407, timeout, ' +
                 'DNS) — que está FORA do seu alcance e você deve apontar com honestidade.'
+            ),
+            new CapabilityInfo(
+                'buscar_no_codigo',
+                '',
+                'Procura um texto/símbolo em TODAS as classes de negócio de uma vez (grep). Requer o ' +
+                'campo "termo". Use pra rastrear onde um campo, método ou conceito é usado pelo codebase ' +
+                'inteiro — acha conexões não óbvias entre classes que uma inspeção isolada não mostra.'
+            ),
+            new CapabilityInfo(
+                'schema_objeto',
+                '',
+                'Lista os campos (nome e tipo) de um objeto do org. Requer o campo "objeto" (API name, ' +
+                'ex.: Account, Log_Erro__c). Use pra entender o modelo de dados ANTES de consultar os ' +
+                'dados — assim você sabe quais campos existem pra montar uma consulta.'
+            ),
+            new CapabilityInfo(
+                'consultar_dados',
+                '',
+                'Roda uma consulta SOQL de LEITURA nos dados reais do org e devolve a contagem + uma ' +
+                'amostra. Requer o campo "soql" (deve começar com SELECT — só leitura, nunca modifica). ' +
+                'É a capacidade mais poderosa pra achar o não óbvio: confirma nos DADOS uma hipótese ' +
+                'levantada no código (ex.: quantos registros um bug afetou). Use schema_objeto antes se ' +
+                'não souber os campos.'
             )
         };
     }

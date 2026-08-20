@@ -88,6 +88,42 @@ private class InvestigationOrchestratorTest {
     }
 
     @isTest
+    static void buscaNoCodigo() {
+        runWith('{"acao":"rodar","capacidade":"buscar_no_codigo","termo":"desconto","porque":"x"}');
+    }
+
+    @isTest
+    static void buscaNoCodigo_semResultado() {
+        runWith('{"acao":"rodar","capacidade":"buscar_no_codigo","termo":"zzz_nao_existe_zzz","porque":"x"}');
+    }
+
+    @isTest
+    static void schemaObjeto() {
+        runWith('{"acao":"rodar","capacidade":"schema_objeto","objeto":"Log_Erro__c","porque":"x"}');
+    }
+
+    @isTest
+    static void schemaObjeto_inexistente() {
+        runWith('{"acao":"rodar","capacidade":"schema_objeto","objeto":"NaoExiste__x","porque":"x"}');
+    }
+
+    @isTest
+    static void consultarDados_ok() {
+        insert new Log_Erro__c(Origem__c = 'X', Nivel__c = 'ERROR', Mensagem__c = 'falha');
+        runWith('{"acao":"rodar","capacidade":"consultar_dados","soql":"SELECT Id, Origem__c FROM Log_Erro__c LIMIT 5","porque":"x"}');
+    }
+
+    @isTest
+    static void consultarDados_naoSelect_recusa() {
+        runWith('{"acao":"rodar","capacidade":"consultar_dados","soql":"DELETE FROM Log_Erro__c","porque":"x"}');
+    }
+
+    @isTest
+    static void consultarDados_erro() {
+        runWith('{"acao":"rodar","capacidade":"consultar_dados","soql":"SELECT Id FROM ObjetoInexistente__c","porque":"x"}');
+    }
+
+    @isTest
     static void localizeIntegration_classificaTodos() {
         System.assert(InvestigationOrchestrator.localizeIntegration('Unauthorized endpoint').contains('org'));
         System.assert(InvestigationOrchestrator.localizeIntegration('HTTP 407 proxy').toLowerCase().contains('proxy'));
