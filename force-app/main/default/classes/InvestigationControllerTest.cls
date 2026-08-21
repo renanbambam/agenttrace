@@ -27,6 +27,17 @@ private class InvestigationControllerTest {
     }
 
     @isTest
+    static void getRecent_retornaLista() {
+        insert new Investigacao__c(
+            Incidente__c = 'incidente x', Area__c = 'codigo', Status__c = 'Concluída',
+            Passos__c = 3, Duracao_Seg__c = 10);
+        Test.startTest();
+        List<Investigacao__c> rows = InvestigationController.getRecentInvestigations();
+        Test.stopTest();
+        System.assert(!rows.isEmpty());
+    }
+
+    @isTest
     static void startDemo_retornaId() {
         Test.startTest();
         String id = InvestigationController.startDemo();

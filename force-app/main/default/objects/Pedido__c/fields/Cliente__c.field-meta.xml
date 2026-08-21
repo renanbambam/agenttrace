@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Cliente__c</fullName>
+    <label>Cliente</label>
+    <description>Nome do cliente/empresa do pedido.</description>
+    <type>Text</type>
+    <length>120</length>
+    <required>false</required>
+</CustomField>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <deploymentStatus>Deployed</deploymentStatus>
+    <description>Registro de cada investigação do AgentTrace — memória institucional (incidente, causa, área, capacidades, duração).</description>
+    <enableActivities>false</enableActivities>
+    <enableHistory>false</enableHistory>
+    <enableReports>true</enableReports>
+    <enableSearch>true</enableSearch>
+    <label>Investigação</label>
+    <pluralLabel>Investigações</pluralLabel>
+    <nameField>
+        <displayFormat>INV-{00000}</displayFormat>
+        <label>Nº</label>
+        <type>AutoNumber</type>
+    </nameField>
+    <sharingModel>ReadWrite</sharingModel>
+</CustomObject>

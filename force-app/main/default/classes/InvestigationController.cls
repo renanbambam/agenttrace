@@ -28,6 +28,17 @@ public with sharing class InvestigationController {
         System.enqueueJob(new FixValidator(investigationId, correcaoJson));
     }
 
+    /** Histórico: as investigações mais recentes (memória institucional). */
+    @AuraEnabled(cacheable=false)
+    public static List<Investigacao__c> getRecentInvestigations() {
+        return [
+            SELECT Name, Incidente__c, Area__c, Status__c, Passos__c, Duracao_Seg__c, CreatedDate
+            FROM Investigacao__c
+            ORDER BY CreatedDate DESC
+            LIMIT 8
+        ];
+    }
+
     /** Demo fixa (não usa Claude): pulsa/acende os nós numa sequência pré-definida. */
     @AuraEnabled
     public static String startDemo() {

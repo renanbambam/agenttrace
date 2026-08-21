@@ -45,7 +45,36 @@ public with sharing class ClaudeService {
                 'Claude HTTP ' + res.getStatusCode() + ': ' + res.getBody()
             );
         }
-        return extractText(res.getBody());
+        Map<String, Object> parsed = (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
+        accumulateUsage(parsed);
+        return extractText(parsed);
+    }
+
+    // --- Custo/uso: acumulado por transação (= por investigação, já que o loop roda numa transação) ---
+    private static Integer tokensIn = 0;
+    private static Integer tokensOut = 0;
+
+    // Preço estimado do modelo padrão (Sonnet), USD por 1M tokens. É estimativa, não fatura.
+    private static final Decimal PRECO_IN = 3.0;
+    private static final Decimal PRECO_OUT = 15.0;
+
+    public static void resetUsage() { tokensIn = 0; tokensOut = 0; }
+    public static Integer getTokens() { return tokensIn + tokensOut; }
+    public static Decimal getCostUsd() {
+        return (tokensIn / 1000000.0) * PRECO_IN + (tokensOut / 1000000.0) * PRECO_OUT;
+    }
+
+    private static void accumulateUsage(Map<String, Object> parsed) {
+        Object u = parsed.get('usage');
+        if (u instanceof Map<String, Object>) {
+            Map<String, Object> usage = (Map<String, Object>) u;
+            tokensIn += toInt(usage.get('input_tokens'));
+            tokensOut += toInt(usage.get('output_tokens'));
+        }
+    }
+
+    private static Integer toInt(Object o) {
+        return o == null ? 0 : Integer.valueOf(String.valueOf(o));
     }
 
     /** Ping simples: prova o canal seguro ponta a ponta. */
@@ -134,8 +163,10 @@ public with sharing class ClaudeService {
             + '{"acao":"rodar","capacidade":"buscar_no_codigo","termo":"<texto/símbolo a procurar em todas as classes>","porque":"<motivo>"}\n'
             + '{"acao":"rodar","capacidade":"schema_objeto","objeto":"<API name do objeto>","porque":"<motivo>"}\n'
             + '{"acao":"rodar","capacidade":"consultar_dados","soql":"<SELECT ... só leitura>","porque":"<motivo>"}\n'
-            + '{"acao":"concluir","resumo":"<parágrafo: o que verificou, o que descartou, a causa provável com evidência específica, e a recomendação>","correcao":{"classe":"<nome exato da classe>","de":"<trecho EXATO do código atual que contém o bug, copiado como está>","para":"<o mesmo trecho já corrigido>","porque":"<por que essa mudança corrige, em uma frase>"}}\n\n'
+            + '{"acao":"perguntar","pergunta":"<UMA pergunta objetiva de esclarecimento>"}\n'
+            + '{"acao":"concluir","resumo":"<parágrafo técnico: o que verificou, o que descartou, a causa provável com evidência específica, e a recomendação>","area":"<uma palavra: codigo, dados, integracao, config, externo ou inconclusivo>","impacto_negocio":"<1 a 2 frases em linguagem de EXECUTIVO — o impacto no cliente, na receita ou na operação, SEM jargão técnico. Ex.: quantos clientes/pedidos afetados e o risco de negócio>","correcao":{"classe":"<nome exato da classe>","de":"<trecho EXATO do código atual que contém o bug, copiado como está>","para":"<o mesmo trecho já corrigido>","porque":"<por que essa mudança corrige, em uma frase>"}}\n\n'
             + 'Regras:\n'
+            + '- Se o incidente for VAGO demais pra saber por onde começar (sem pista de sintoma, área ou objeto), use "perguntar" com UMA pergunta objetiva de esclarecimento em vez de adivinhar — só no primeiro passo e só se realmente necessário. Se já der pra investigar, investigue.\n'
             + '- Nunca invente uma causa. Toda conclusão precisa de evidência específica (ex.: a linha do código, o número do achado, o resultado do teste).\n'
             + '- Só inclua "correcao" quando você tiver uma correção de código concreta: o trecho EXATO a trocar (copiado do código que você inspecionou) e a versão já corrigida. Se a causa está fora do seu alcance, ou você não tem o trecho exato, OMITA "correcao" — nunca invente uma correção. Você propõe; quem aplica é o humano.\n'
             + '- Para investigar código: primeiro use listar_classes pra descobrir os nomes, depois inspecionar_codigo com o nome exato. Ao ver o código, aponte o bug na linha específica se houver.\n'
@@ -185,10 +216,8 @@ public with sharing class ClaudeService {
         }
     }
 
-    /** Extrai o primeiro bloco de texto do content[] da resposta. */
-    private static String extractText(String responseBody) {
-        Map<String, Object> parsed =
-            (Map<String, Object>) JSON.deserializeUntyped(responseBody);
+    /** Extrai o primeiro bloco de texto do content[] da resposta já parseada. */
+    private static String extractText(Map<String, Object> parsed) {
         List<Object> content = (List<Object>) parsed.get('content');
         if (content != null) {
             for (Object item : content) {

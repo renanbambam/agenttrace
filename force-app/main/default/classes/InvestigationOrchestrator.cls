@@ -1,18 +1,30 @@
 /**
  * Orquestrador da investigação — o loop de raciocínio, guiado pela Claude.
  *
- * A cada passo (Queueable que se re-enfileira) o agente NARRA em primeira pessoa
- * o que está fazendo — pensando, decidindo (com o porquê), vasculhando, achando —
- * publicando eventos de narração, de nó do mapa, e de CÓDIGO (o código-fonte real
- * aparecendo na tela). É isso que torna o raciocínio visível ao vivo.
+ * O loop RODA INTEIRO NUMA TRANSAÇÃO SÓ (um Queueable, um for). Antes era um
+ * Queueable que se re-enfileirava a cada passo, mas o Developer Edition limita a
+ * cadeia de Queueables a 5 níveis ("Maximum stack depth") — investigação funda
+ * quebrava no 6º passo. Rodando o loop numa transação só: sem limite de pilha,
+ * sem atraso entre passos (bem mais rápido), e os eventos continuam AO VIVO porque
+ * o Investigation_Step__e é PublishImmediately (entregue na hora, não no commit).
  *
- * O agente se vira: descobre as classes, abre o código real, avalia. Se algo estiver
- * fora do alcance (rede/proxy externo), ele para e reporta com honestidade — nunca
- * inventa uma causa.
+ * A cada passo o agente NARRA em primeira pessoa (pensando, decidindo com o porquê,
+ * vasculhando, achando) e mostra artefatos reais (código, consulta, console). Se algo
+ * estiver fora do alcance (rede/proxy externo), ele para e reporta com honestidade.
  */
 public with sharing class InvestigationOrchestrator implements Queueable, Database.AllowsCallouts {
 
-    private static final Integer MAX_ITERATIONS = 12;
+    // Passos máximos numa investigação. Fica dentro do orçamento de callout (120s/transação).
+    private static final Integer MAX_ITERATIONS = 8;
+
+    // Frases de "pensando" entre passos (variadas, pra o status não ficar repetitivo).
+    private static final List<String> PENSANDO = new List<String>{
+        'Cruzando o que já descobri pra decidir o próximo passo…',
+        'Formulando a próxima hipótese com base nas evidências…',
+        'Decidindo onde vasculhar em seguida…',
+        'Conectando os pontos entre o que já vi…',
+        'Pesando qual evidência ainda falta…'
+    };
 
     // Classes internas do próprio agente — não são alvo de investigação.
     private static final Set<String> FRAMEWORK = new Set<String>{
@@ -20,7 +32,7 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         'InvestigationCapability', 'CapabilityRegistry', 'CapabilityResult',
         'FailedJobsCapability', 'ConfigChangesCapability', 'InvestigationStepPublisher',
         'ToolingService', 'ErrorLogCapability', 'FixValidator',
-        'OrgLimitsCapability', 'AutomationsCapability'
+        'OrgLimitsCapability', 'AutomationsCapability', 'AgentEval'
     };
 
     // Tokens de dado pessoal (PII) que a consulta de dados NUNCA pode tocar.
@@ -31,115 +43,120 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
 
     private final String investigationId;
     private final String incident;
-    private final List<String> findings;
-    private final Integer iteration;
+    private final List<String> findings = new List<String>();
+    private final Set<String> usedCaps = new Set<String>();
+    private Long startMs;
 
-    public InvestigationOrchestrator(String investigationId, String incident,
-                                     List<String> findings, Integer iteration) {
+    public InvestigationOrchestrator(String investigationId, String incident) {
         this.investigationId = investigationId;
         this.incident = incident;
-        this.findings = findings;
-        this.iteration = iteration;
     }
 
     public static String start(String incident) {
         String investigationId = 'inv-' + String.valueOf(DateTime.now().getTime());
-        System.enqueueJob(
-            new InvestigationOrchestrator(investigationId, incident, new List<String>(), 0)
-        );
+        System.enqueueJob(new InvestigationOrchestrator(investigationId, incident));
         return investigationId;
     }
 
     public void execute(QueueableContext context) {
-        if (iteration >= MAX_ITERATIONS) {
-            publishNarration('pensando', 'Já investiguei bastante. Vou fechar com o que tenho.');
-            publishSummary('Investigação encerrada por limite de passos, sem uma causa confirmada. Recomendo revisar manualmente os sinais já levantados.');
-            return;
-        }
+        startMs = DateTime.now().getTime();
+        ClaudeService.resetUsage();
+        for (Integer iter = 0; iter < MAX_ITERATIONS; iter++) {
+            // Feedback IMEDIATO do que ele está pensando, ANTES da Claude responder.
+            publishThinking(iter == 0
+                ? 'Recebi o incidente. Analisando por onde começar…'
+                : PENSANDO[Math.mod(iter, PENSANDO.size())]);
 
-        // Callout PRIMEIRO (antes de qualquer publish), pra evitar "uncommitted work".
-        Map<String, Object> decision;
-        try {
-            decision = ClaudeService.decideNextStep(incident, findings);
-        } catch (Exception e) {
-            publishNarration('pensando', 'Tive um problema pra raciocinar sobre o próximo passo.');
-            publishSummary('A investigação parou por uma falha operacional ao consultar o raciocínio: ' + e.getMessage() + '. Nenhuma causa foi confirmada.');
-            return;
-        }
-
-        String acao = (String) decision.get('acao');
-        String porque = (String) decision.get('porque');
-        String capName = (String) decision.get('capacidade');
-        String alvo = (String) decision.get('alvo');
-
-        if (acao == 'concluir') {
-            publishNarration('decisao', 'Já tenho o que preciso. Fechando o diagnóstico.');
-            Object correcao = decision.get('correcao');
-            if (correcao != null) {
-                publishNarration('decisao', 'Tenho uma correção pra propor — vou pedir sua autorização antes de qualquer coisa.');
-                publishFix(JSON.serialize(correcao));
+            Map<String, Object> decision;
+            try {
+                decision = ClaudeService.decideNextStep(incident, findings);
+            } catch (Exception e) {
+                publishNarration('pensando', 'Tive um problema pra raciocinar sobre o próximo passo.');
+                publishSummary('A investigação parou por uma falha operacional ao consultar o raciocínio: '
+                    + e.getMessage() + '. Nenhuma causa foi confirmada.');
+                return;
             }
-            publishSummary((String) decision.get('resumo'));
-            return;
+
+            String acao = (String) decision.get('acao');
+            String porque = (String) decision.get('porque');
+            String capName = (String) decision.get('capacidade');
+            String alvo = (String) decision.get('alvo');
+
+            if (acao == 'concluir') {
+                publishNarration('decisao', 'Já tenho o que preciso. Fechando o diagnóstico.');
+                String resumo = (String) decision.get('resumo');
+                String area = (String) decision.get('area');
+                String impacto = (String) decision.get('impacto_negocio');
+                Object correcao = decision.get('correcao');
+                if (correcao != null) {
+                    publishNarration('decisao', 'Tenho uma correção pra propor — vou pedir sua autorização antes de qualquer coisa.');
+                    publishFix(JSON.serialize(correcao));
+                }
+                if (String.isNotBlank(impacto)) { publishImpact(impacto); }
+                publishCost();
+                publishSummary(resumo);
+                String status = (area == 'externo') ? 'Fora do alcance' : 'Concluída';
+                saveInvestigation(resumo, impacto, area, iter, status);
+                return;
+            }
+
+            // Incidente vago: o agente pede esclarecimento em vez de adivinhar.
+            if (acao == 'perguntar') {
+                String pergunta = (String) decision.get('pergunta');
+                publishQuestion(String.isBlank(pergunta) ? 'Pode detalhar mais o incidente?' : pergunta);
+                return;
+            }
+
+            // Tolerante: às vezes a Claude põe a capacidade direto no 'acao'.
+            if (String.isBlank(capName) && acao != 'rodar') {
+                capName = acao;
+            }
+            if (String.isBlank(capName)) {
+                publishSummary('Investigação encerrada: a decisão do raciocínio não foi reconhecida.');
+                return;
+            }
+
+            // Executa a capacidade. Erro inesperado (ex.: orçamento de callout) encerra com honestidade.
+            try {
+                runCapability(capName, decision, porque, alvo);
+            } catch (Exception e) {
+                publishNarration('pensando', 'Bati num limite de execução. Vou fechar com o que já tenho.');
+                publishSummary('Investigação encerrada por um limite operacional (' + e.getMessage()
+                    + '). Segui até onde o org permitiu nesta rodada.');
+                return;
+            }
+            // loop continua para o próximo passo
         }
 
-        // Tolerante: às vezes a Claude põe a capacidade direto no 'acao'
-        // (ex.: acao='testar_codigo') em vez de acao='rodar' + capacidade.
-        if (String.isBlank(capName) && acao != 'rodar') {
-            capName = acao;
-        }
+        publishNarration('pensando', 'Já investiguei bastante. Vou fechar com o que tenho.');
+        String semCausa = 'Investigação encerrada por limite de passos, sem uma causa 100% confirmada. Recomendo revisar manualmente os sinais já levantados.';
+        publishSummary(semCausa);
+        saveInvestigation(semCausa, null, 'inconclusivo', MAX_ITERATIONS, 'Inconclusiva');
+    }
 
-        if (String.isBlank(capName)) {
-            publishSummary('Investigação encerrada: a decisão do raciocínio não foi reconhecida.');
-            return;
-        }
+    // Despacha a decisão pra capacidade certa (sem re-enfileirar — o loop continua sozinho).
+    private void runCapability(String capName, Map<String, Object> decision, String porque, String alvo) {
+        usedCaps.add(capName);
+        publishTool(capName);   // acende a capacidade no painel da tela
+        if (capName == 'listar_classes') { runListClasses(porque); return; }
+        if (capName == 'inspecionar_codigo') { runInspectCode(alvo, porque); return; }
+        if (capName == 'testar_codigo') { runTest((String) decision.get('codigo_teste'), porque); return; }
+        if (capName == 'sondar_integracao') { runProbe((String) decision.get('endpoint'), porque); return; }
+        if (capName == 'buscar_no_codigo') { runBuscarCodigo((String) decision.get('termo'), porque); return; }
+        if (capName == 'schema_objeto') { runSchema((String) decision.get('objeto'), porque); return; }
+        if (capName == 'consultar_dados') { runConsultarDados((String) decision.get('soql'), porque); return; }
+        if (capName == 'ler_debug_logs') { runDebugLogs(porque); return; }
 
-        // --- Ferramentas de código ---
-        if (capName == 'listar_classes') {
-            runListClasses(porque);
-            return;
-        }
-        if (capName == 'inspecionar_codigo') {
-            runInspectCode(alvo, porque);
-            return;
-        }
-        if (capName == 'testar_codigo') {
-            runTest((String) decision.get('codigo_teste'), porque);
-            return;
-        }
-        if (capName == 'sondar_integracao') {
-            runProbe((String) decision.get('endpoint'), porque);
-            return;
-        }
-        if (capName == 'buscar_no_codigo') {
-            runBuscarCodigo((String) decision.get('termo'), porque);
-            return;
-        }
-        if (capName == 'schema_objeto') {
-            runSchema((String) decision.get('objeto'), porque);
-            return;
-        }
-        if (capName == 'consultar_dados') {
-            runConsultarDados((String) decision.get('soql'), porque);
-            return;
-        }
-        if (capName == 'ler_debug_logs') {
-            runDebugLogs(porque);
-            return;
-        }
-
-        // --- Sinais de infraestrutura (jobs/config) ---
         InvestigationCapability cap = CapabilityRegistry.resolve(capName);
         if (cap == null) {
             publishNarration('pensando', 'Pensei numa verificação que não tenho. Vou seguir com outra.');
             findings.add(capName + ': capacidade desconhecida, ignorada.');
-            enqueueNext();
             return;
         }
         runSignal(cap, capName, porque);
     }
 
-    // --- Handlers de cada tipo de passo ---
+    // --- Handlers de cada tipo de passo (sem enqueue — só fazem o trabalho e voltam ao loop) ---
 
     private void runListClasses(String porque) {
         publishNarration('decisao', 'Vou ver quais classes existem pra investigar. ' + safe(porque));
@@ -149,7 +166,6 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         publishNarration('achado', 'Classes de negócio disponíveis: ' + nomes);
         findings.add('classes_disponiveis: ' + nomes);
         publishNarration('pensando', 'Deixa eu pensar qual delas olhar…');
-        enqueueNext();
     }
 
     private void runInspectCode(String alvo, String porque) {
@@ -164,14 +180,12 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
             publishNarration('achado', 'Abri o código de ' + alvo + '. Vou analisar linha por linha.');
             findings.add('codigo(' + alvo + '):\n' + source);
         }
-        publishNarration('pensando', 'Analisando o código…');
-        enqueueNext();
+        publishNarration('pensando', 'Analisando o código de ' + safe(alvo) + '…');
     }
 
     private void runTest(String codigoTeste, String porque) {
         if (String.isBlank(codigoTeste)) {
             publishNarration('pensando', 'Quis testar mas não montei o código do teste. Vou seguir.');
-            enqueueNext();
             return;
         }
 
@@ -184,7 +198,6 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
             erroExec = e.getMessage();
         }
 
-        // Agora narra e mostra o teste + o console (o "screen-share").
         publishNarration('decisao', 'Vou escrever um teste pra provar isso. ' + safe(porque));
         publishTest('Verificação', codigoTeste);
         publishNarration('acao', 'Rodando o teste ao vivo…');
@@ -208,18 +221,15 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         }
 
         publishNarration('pensando', 'Analisando o resultado do teste…');
-        enqueueNext();
     }
 
     private void runProbe(String endpoint, String porque) {
         if (String.isBlank(endpoint)) {
             publishNarration('pensando', 'Quis sondar uma integração mas não achei o endpoint. Vou seguir.');
-            enqueueNext();
             return;
         }
 
-        // Callout DIRETO (o Queueable já permite callout), PRIMEIRO — antes de qualquer
-        // publish, pra evitar "uncommitted work". É GET (só leitura), nunca POST.
+        // Callout DIRETO (o Queueable já permite callout), PRIMEIRO. É GET (só leitura), nunca POST.
         Integer status;
         String excMsg;
         try {
@@ -233,7 +243,6 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
             excMsg = e.getMessage();
         }
 
-        // O que a sonda faz, mostrado na tela (só leitura).
         String probeShown =
             'HttpRequest req = new HttpRequest();\n' +
             'req.setEndpoint(\'' + endpoint + '\');\n' +
@@ -260,7 +269,6 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         }
 
         publishNarration('pensando', 'Analisando o resultado da sonda…');
-        enqueueNext();
     }
 
     // Traduz a exceção da sonda em ONDE está o problema (dentro do org vs fora).
@@ -286,7 +294,6 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
     private void runBuscarCodigo(String termo, String porque) {
         if (String.isBlank(termo)) {
             publishNarration('pensando', 'Quis buscar no código mas não defini o termo. Vou seguir.');
-            enqueueNext();
             return;
         }
         publishNarration('decisao', 'Vou procurar "' + termo + '" em todo o código. ' + safe(porque));
@@ -318,14 +325,12 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
             findings.add('buscar_no_codigo(' + termo + '): ' + hits.size() + ' ocorrências: ' + String.join(hits, ' | '));
         }
         publishNarration('pensando', 'Vendo aonde isso me leva…');
-        enqueueNext();
     }
 
     // Descreve os campos (nome + tipo) de um objeto — o modelo de dados.
     private void runSchema(String objeto, String porque) {
         if (String.isBlank(objeto)) {
             publishNarration('pensando', 'Quis ver o schema mas não defini o objeto. Vou seguir.');
-            enqueueNext();
             return;
         }
         publishNarration('decisao', 'Vou ver os campos de "' + objeto + '". ' + safe(porque));
@@ -333,7 +338,6 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         if (t == null) {
             publishNarration('descartado', 'O objeto "' + objeto + '" não existe neste org.');
             findings.add('schema_objeto(' + objeto + '): objeto não encontrado.');
-            enqueueNext();
             return;
         }
         List<String> campos = new List<String>();
@@ -343,15 +347,13 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         }
         publishNarration('achado', objeto + ' tem ' + campos.size() + ' campos: ' + String.join(campos, ', '));
         findings.add('schema_objeto(' + objeto + '): ' + String.join(campos, ', '));
-        publishNarration('pensando', 'Agora sei o que posso consultar…');
-        enqueueNext();
+        publishNarration('pensando', 'Agora sei o que posso consultar em ' + objeto + '…');
     }
 
-    // Consulta SOQL de LEITURA nos dados reais. Amarra: só SELECT (Database.query nunca faz DML).
+    // Consulta SOQL de LEITURA nos dados reais. Amarras: só SELECT + guarda de privacidade.
     private void runConsultarDados(String soql, String porque) {
         if (String.isBlank(soql)) {
             publishNarration('pensando', 'Quis consultar dados mas não montei a query. Vou seguir.');
-            enqueueNext();
             return;
         }
         String q = soql.trim();
@@ -359,7 +361,6 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         if (!qLower.startsWith('select')) {
             publishNarration('descartado', 'Recusei uma consulta que não era SELECT — só leitura é permitida.');
             findings.add('consultar_dados: recusado (não-SELECT): ' + q);
-            enqueueNext();
             return;
         }
 
@@ -370,7 +371,6 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
                     'Recusei por PRIVACIDADE: a consulta tocaria em dado pessoal ("' + pii + '"). ' +
                     'Eu investigo fundo, mas não acesso dados de pessoas — uso contagem/agregado no lugar.');
                 findings.add('consultar_dados: RECUSADO por privacidade (campo "' + pii + '"). Prefira COUNT()/agregado.');
-                enqueueNext();
                 return;
             }
         }
@@ -379,29 +379,38 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         publishTest('Consulta (SOQL)', q);
         publishNarration('acao', 'Rodando a consulta ao vivo…');
 
+        // COUNT() agregado exige Database.countQuery (não Database.query).
+        Boolean isCount = qLower.replaceAll('\\s+', '').startsWith('selectcount()');
+
         try {
-            List<SObject> rows = Database.query(q);
-            String amostra = '(sem registros)';
-            if (!rows.isEmpty()) {
-                List<SObject> primeiros = new List<SObject>();
-                for (Integer i = 0; i < Math.min(3, rows.size()); i++) {
-                    primeiros.add(rows[i]);
+            if (isCount) {
+                Integer total = Database.countQuery(q);
+                publishTestResult('> Resultado: ' + total + ' registro(s).');
+                publishNarration('achado', 'A consulta contou ' + total + ' registro(s) nos dados reais.');
+                findings.add('consultar_dados(' + q + '): COUNT = ' + total + '.');
+            } else {
+                List<SObject> rows = Database.query(q);
+                String amostra = '(sem registros)';
+                if (!rows.isEmpty()) {
+                    List<SObject> primeiros = new List<SObject>();
+                    for (Integer i = 0; i < Math.min(3, rows.size()); i++) {
+                        primeiros.add(rows[i]);
+                    }
+                    amostra = JSON.serialize(primeiros);
+                    if (amostra.length() > 1500) {
+                        amostra = amostra.substring(0, 1500) + '…';
+                    }
                 }
-                amostra = JSON.serialize(primeiros);
-                if (amostra.length() > 1500) {
-                    amostra = amostra.substring(0, 1500) + '…';
-                }
+                publishTestResult('> ' + rows.size() + ' registro(s).\nAmostra: ' + amostra);
+                publishNarration('achado', 'A consulta retornou ' + rows.size() + ' registro(s).');
+                findings.add('consultar_dados(' + q + '): ' + rows.size() + ' registros. Amostra: ' + amostra);
             }
-            publishTestResult('> ' + rows.size() + ' registro(s).\nAmostra: ' + amostra);
-            publishNarration('achado', 'A consulta retornou ' + rows.size() + ' registro(s).');
-            findings.add('consultar_dados(' + q + '): ' + rows.size() + ' registros. Amostra: ' + amostra);
         } catch (Exception e) {
             publishTestResult('> Erro na consulta:\n' + e.getMessage());
             publishNarration('descartado', 'A consulta falhou: ' + e.getMessage());
             findings.add('consultar_dados(' + q + '): erro: ' + e.getMessage());
         }
-        publishNarration('pensando', 'Analisando os dados…');
-        enqueueNext();
+        publishNarration('pensando', 'Analisando os dados que voltaram…');
     }
 
     // Lê os logs de debug (runtime). SOQL nos ApexLog + baixa o corpo do mais recente (callout).
@@ -418,18 +427,16 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         } catch (Exception e) {
             publishNarration('descartado', 'Não consegui ler os logs de debug: ' + e.getMessage());
             findings.add('ler_debug_logs: erro de acesso: ' + e.getMessage());
-            enqueueNext();
             return;
         }
 
         if (logs.isEmpty()) {
             publishNarration('descartado', 'Nenhum log de debug recente — a trace flag pode estar desligada.');
             findings.add('ler_debug_logs: nenhum log recente.');
-            enqueueNext();
             return;
         }
 
-        // Baixa o corpo do log mais recente (callout PRIMEIRO, depois publica).
+        // Baixa o corpo do log mais recente (callout).
         ApexLog alvo = logs[0];
         String corpo;
         try {
@@ -450,7 +457,6 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         String trecho = (corpo != null && corpo.length() > 800) ? corpo.substring(0, 800) : corpo;
         findings.add('ler_debug_logs: ' + String.join(meta, ' | ') + '. Trecho do mais recente: ' + trecho);
         publishNarration('pensando', 'Analisando o rastro do runtime…');
-        enqueueNext();
     }
 
     private void runSignal(InvestigationCapability cap, String capName, String porque) {
@@ -470,7 +476,6 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         }
         findings.add(capName + ': ' + result.message);
         publishNarration('pensando', 'Deixa eu pensar no próximo passo…');
-        enqueueNext();
     }
 
     // --- Leitura de código (SOQL nativo, sem callout) ---
@@ -497,17 +502,87 @@ public with sharing class InvestigationOrchestrator implements Queueable, Databa
         return rows.isEmpty() ? null : rows[0].Body;
     }
 
-    // --- Publicação de eventos ---
+    // --- Publicação de eventos (Investigation_Step__e é PublishImmediately -> chega ao vivo) ---
 
-    private void enqueueNext() {
-        // Em teste, encadear Queueable não é permitido pela plataforma; pulamos.
-        // Em produção, é isto que faz o loop avançar passo a passo.
-        if (Test.isRunningTest()) {
-            return;
+    // Pergunta de esclarecimento (incidente vago) — pausa e espera a resposta humana.
+    private void publishQuestion(String pergunta) {
+        publishNarration('pensando', 'O incidente está vago pra eu ir direto ao ponto. Vou perguntar antes de adivinhar.');
+        EventBus.publish(new Investigation_Step__e(
+            Investigation_Id__c = investigationId,
+            Step_Type__c        = 'question',
+            Message__c          = 'question',
+            Payload__c          = pergunta
+        ));
+    }
+
+    // Custo/uso desta investigação (consciência de produção).
+    private void publishCost() {
+        Integer tok = ClaudeService.getTokens();
+        Decimal usd = ClaudeService.getCostUsd().setScale(4);
+        Long dur = (startMs == null) ? 0 : (DateTime.now().getTime() - startMs);
+        String txt = tok + ' tokens · ~$' + usd + ' · ' + Math.round(dur / 1000.0) + 's';
+        EventBus.publish(new Investigation_Step__e(
+            Investigation_Id__c = investigationId,
+            Step_Type__c        = 'cost',
+            Message__c          = 'cost',
+            Payload__c          = txt
+        ));
+    }
+
+    // Impacto em linguagem de NEGÓCIO (o "B2C simulator"): tradução do técnico pro executivo.
+    private void publishImpact(String texto) {
+        EventBus.publish(new Investigation_Step__e(
+            Investigation_Id__c = investigationId,
+            Step_Type__c        = 'impact',
+            Message__c          = 'impact',
+            Payload__c          = texto
+        ));
+    }
+
+    // Grava a investigação como REGISTRO (memória institucional). Nunca derruba a investigação.
+    private void saveInvestigation(String resumo, String impacto, String area, Integer steps, String status) {
+        try {
+            Long dur = (startMs == null) ? 0 : (DateTime.now().getTime() - startMs);
+            insert new Investigacao__c(
+                Incidente__c       = trunc(incident, 32000),
+                Conclusao__c       = trunc(resumo, 32000),
+                Impacto_Negocio__c = trunc(impacto, 32000),
+                Area__c            = area,
+                Capacidades__c     = trunc(String.join(new List<String>(usedCaps), ', '), 255),
+                Passos__c          = steps,
+                Duracao_Seg__c     = Math.round(dur / 1000.0),
+                Tokens__c          = ClaudeService.getTokens(),
+                Custo_USD__c       = ClaudeService.getCostUsd().setScale(4),
+                Status__c          = status
+            );
+        } catch (Exception e) {
+            publishNarration('pensando', 'Não consegui registrar a investigação no histórico: ' + e.getMessage());
         }
-        System.enqueueJob(
-            new InvestigationOrchestrator(investigationId, incident, findings, iteration + 1)
-        );
+    }
+
+    private static String trunc(String s, Integer n) {
+        if (s == null) { return null; }
+        return s.length() > n ? s.substring(0, n) : s;
+    }
+
+    // Sinaliza qual capacidade está sendo usada (acende o painel de capacidades na tela).
+    private void publishTool(String capName) {
+        EventBus.publish(new Investigation_Step__e(
+            Investigation_Id__c = investigationId,
+            Step_Type__c        = 'tool',
+            Message__c          = capName,
+            Payload__c          = null
+        ));
+    }
+
+    // Status de "pensando" — atualiza o indicador vivo da tela, sem virar item do histórico.
+    private void publishThinking(String texto) {
+        EventBus.publish(new Investigation_Step__e(
+            Investigation_Id__c = investigationId,
+            Step_Type__c        = 'thinking',
+            Message__c          = 'thinking',
+            Payload__c          = texto
+        ));
     }
 
     private void publishNarration(String kind, String text) {

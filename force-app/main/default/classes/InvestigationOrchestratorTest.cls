@@ -16,7 +16,8 @@ private class InvestigationOrchestratorTest {
 
     @isTest
     static void conclui() {
-        runWith('{"acao":"concluir","resumo":"conclusao de teste"}');
+        runWith('{"acao":"concluir","resumo":"conclusao de teste","area":"codigo","impacto_negocio":"12 pedidos afetados, risco de receita"}');
+        System.assertEquals(1, [SELECT COUNT() FROM Investigacao__c], 'deve gravar o registro da investigação');
     }
 
     @isTest

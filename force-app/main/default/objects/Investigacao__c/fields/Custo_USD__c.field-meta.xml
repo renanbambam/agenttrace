@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Custo_USD__c</fullName>
+    <label>Custo estimado (USD)</label>
+    <type>Number</type>
+    <precision>8</precision>
+    <scale>4</scale>
+    <required>false</required>
+</CustomField>
