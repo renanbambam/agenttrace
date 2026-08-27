@@ -28,11 +28,30 @@ public with sharing class InvestigationController {
         System.enqueueJob(new FixValidator(investigationId, correcaoJson));
     }
 
+    /**
+     * Fecha o ciclo DE VERDADE: aplica a correção validada no código do org (deploy).
+     * Só é chamado depois da validação ao vivo — nunca sem autorização humana.
+     */
+    @AuraEnabled
+    public static void aplicarCorrecao(String investigationId, String correcaoJson) {
+        if (String.isBlank(investigationId) || String.isBlank(correcaoJson)) {
+            throw new AuraHandledException('Faltam dados da correção para aplicar.');
+        }
+        System.enqueueJob(new CodeDeployer(investigationId, correcaoJson));
+    }
+
+    /** Sentinela: roda a varredura proativa agora (botão da tela). */
+    @AuraEnabled
+    public static String rodarVarredura() {
+        return SentinelScanner.runNow();
+    }
+
     /** Histórico: as investigações mais recentes (memória institucional). */
     @AuraEnabled(cacheable=false)
     public static List<Investigacao__c> getRecentInvestigations() {
         return [
-            SELECT Name, Incidente__c, Area__c, Status__c, Passos__c, Duracao_Seg__c, CreatedDate
+            SELECT Name, Incidente__c, Area__c, Status__c, Passos__c, Duracao_Seg__c,
+                   Tokens__c, Custo_USD__c, CreatedDate
             FROM Investigacao__c
             ORDER BY CreatedDate DESC
             LIMIT 8

@@ -1,269 +1,308 @@
 <template>
-    <div class="at-app">
-        <!-- Cabeçalho / identidade -->
-        <header class="at-header">
-            <div class="at-header__brand">
-                <span class="at-header__logo">🔎</span>
-                <div>
-                    <div class="at-header__name">AgentTrace</div>
-                    <div class="at-header__tag">Investigador de causa raiz para o seu org Salesforce</div>
-                </div>
+    <div class="ag">
+        <!-- Masthead -->
+        <header class="ag-mast">
+            <div class="ag-mast__id">
+                <span class="ag-mast__name">AgentTrace</span>
+                <span class="ag-mast__desc">Diagnóstico de causa raiz · org Salesforce</span>
             </div>
-            <template lwc:if={isRunning}>
-                <span class="at-header__live"><i></i> Investigando</span>
-            </template>
+            <div class="ag-mast__watch">
+                <template lwc:if={hasSweep}>
+                    <span class="ag-mast__sweep">{sweepText}</span>
+                </template>
+                <span class="ag-mast__watchlabel">Vigilância contínua</span>
+                <button class="ag-link" onclick={handleSweep} disabled={sweeping}>Rodar varredura</button>
+            </div>
         </header>
 
-        <!-- Console de comando -->
-        <div class="at-console">
-            <lightning-textarea
-                name="incident"
-                variant="label-hidden"
-                class="at-console__input"
-                placeholder="Descreva o incidente… ou clique num exemplo abaixo"
-                value={incidentText}
-                onchange={handleIncidentChange}>
-            </lightning-textarea>
-            <div class="at-console__row">
-                <div class="at-chips">
+        <!-- Registrar incidente -->
+        <section class="ag-intake">
+            <label class="ag-fieldlabel">Incidente</label>
+            <lightning-textarea class="ag-input" variant="label-hidden"
+                placeholder="Descreva o sintoma. Ex.: o cálculo de desconto está errado para pedidos de exatamente R$ 100."
+                value={incidentText} onchange={handleIncidentChange}></lightning-textarea>
+            <div class="ag-intake__foot">
+                <div class="ag-examples">
+                    <span class="ag-examples__lead">Comuns:</span>
                     <template for:each={exampleChips} for:item="chip">
-                        <button key={chip.key} data-text={chip.text} class="at-chip"
+                        <button key={chip.key} data-text={chip.text} class="ag-example"
                             onclick={handleChip}>{chip.label}</button>
                     </template>
                 </div>
-                <lightning-button
-                    label="Investigar"
-                    variant="brand"
-                    class="at-console__go"
-                    disabled={investigateDisabled}
-                    onclick={handleInvestigate}>
-                </lightning-button>
+                <button class="ag-btn" disabled={investigateDisabled} onclick={handleInvestigate}>Investigar</button>
             </div>
-        </div>
+        </section>
 
-        <!-- Cockpit: Tela do agente | Linha do tempo -->
-        <div class="at-cockpit">
-            <!-- Tela do agente -->
-            <section class="at-pane">
-                <p class="at-pane__title">Tela do agente</p>
-                <template lwc:if={showThinking}>
-                    <div class="at-thinking">
-                        <span class="at-thinking__brain">🧠</span>
-                        <span class="at-thinking__text">{thinkingText}</span>
-                        <span class="at-thinking__dots"><i></i><i></i><i></i></span>
-                    </div>
-                </template>
-                <template lwc:if={hasScreen}>
-                    <div class="at-screen">
-                        <div class="at-screen__bar">
-                            <span class="at-screen__dot"></span>
-                            <span class="at-screen__dot"></span>
-                            <span class="at-screen__dot"></span>
-                            <span class="at-screen__title">{screenTitle}</span>
-                        </div>
-                        <div class="at-tabs">
-                            <template for:each={screenTabs} for:item="tab">
-                                <button key={tab.id} data-id={tab.id} class={tab.cssClass}
-                                    onclick={handleSelectTab}>
-                                    <span class="at-tab__icon">{tab.icon}</span>{tab.label}
-                                </button>
-                            </template>
-                        </div>
-                        <div class="at-screen__body">
-                            <template for:each={screenLines} for:item="ln">
-                                <div key={ln.key} class={ln.cssClass}>
-                                    <span class="at-code__num">{ln.num}</span>
-                                    <span class="at-code__text">
-                                        <template for:each={ln.tokens} for:item="t">
-                                            <span key={t.key} class={t.cls}>{t.text}</span>
-                                        </template>
-                                        <template lwc:if={ln.showCursor}>
-                                            <span class="at-caret"></span>
-                                        </template>
-                                    </span>
-                                </div>
-                            </template>
-                            <template lwc:if={hasConsole}>
-                                <div class="at-console-out">{screenConsole}</div>
-                            </template>
-                        </div>
-                        <div class={screenStatusClass}>
-                            <span class="at-statusbar__dot"></span>
-                            <span class="at-statusbar__text">{screenStatus}</span>
-                            <span class="at-statusbar__file">{screenTitle}</span>
-                        </div>
-                    </div>
-                </template>
-                <template lwc:else>
-                    <div class="at-screen at-screen_idle">
-                        <div class="at-screen__placeholder">
-                            🖥️ Quando o agente abrir um arquivo, rodar um teste ou consultar dados,
-                            você vê acontecer aqui — ao vivo, como uma tela compartilhada.
-                        </div>
-                    </div>
-                </template>
+        <!-- Esclarecimento (incidente vago) -->
+        <template lwc:if={hasQuestion}>
+            <section class="ag-clarify">
+                <div class="ag-clarify__q"><span class="ag-kicker">Esclarecimento necessário</span> {pendingQuestion}</div>
+                <div class="ag-clarify__row">
+                    <lightning-input class="ag-clarify__input" type="text" variant="label-hidden"
+                        placeholder="Sua resposta…" value={questionAnswer}
+                        onchange={handleAnswerChange}></lightning-input>
+                    <button class="ag-btn ag-btn--ghost" onclick={handleAnswer}>Responder</button>
+                </div>
             </section>
+        </template>
 
-            <!-- Linha do tempo -->
-            <section class="at-pane">
-                <p class="at-pane__title">Linha do tempo da investigação</p>
-                <div class="at-timeline">
-                    <template lwc:if={hasTimeline}>
-                        <template for:each={renderTimeline} for:item="entry">
-                            <div key={entry.key} class="at-tl-item">
-                                <span class="at-tl-rail"></span>
-                                <span class={entry.dotClass}>{entry.icon}</span>
-                                <div class="at-tl-body">
-                                    <template lwc:if={entry.isText}>{entry.text}</template>
-                                    <template lwc:if={entry.isCode}>
-                                        <div class="at-code">
-                                            <button class="at-code__bar" data-key={entry.key}
-                                                onclick={handleToggleCode}>
-                                                <span class="at-code__caret">{entry.caret}</span>
-                                                <span class="at-code__file">{entry.file}</span>
-                                            </button>
-                                            <template lwc:if={entry.open}>
-                                                <div class="at-code__body">
-                                                    <template for:each={entry.lines} for:item="ln">
-                                                        <div key={ln.key} class="at-code__line">
-                                                            <span class="at-code__num">{ln.num}</span>
-                                                            <span class="at-code__text">
-                                                                <template for:each={ln.tokens} for:item="t">
-                                                                    <span key={t.key} class={t.cls}>{t.text}</span>
-                                                                </template>
-                                                            </span>
-                                                        </div>
-                                                    </template>
-                                                </div>
-                                            </template>
-                                        </div>
-                                    </template>
-                                    <template lwc:if={entry.isConsole}>
-                                        <div class="at-console-out">{entry.text}</div>
-                                    </template>
+        <!-- Caso em apuração -->
+        <template lwc:if={hasCase}>
+            <div class="ag-casehead">
+                <span class={statusClass}>{statusLabel}</span>
+                <template lwc:if={usedToolsLabel}>
+                    <span class="ag-facts"><span class="ag-facts__k">Ferramentas</span>{usedToolsLabel}</span>
+                </template>
+                <template lwc:if={hasCost}>
+                    <span class="ag-facts"><span class="ag-facts__k">Execução</span>{costText}</span>
+                </template>
+            </div>
+
+            <!-- Mapa da investigação: sintoma -> suspeitos (acende/apaga/descarta) -> causa -->
+            <template lwc:if={hasMap}>
+                <section class="ag-mapwrap">
+                    <div class="ag-panel__head">Mapa da investigação</div>
+                    <div class="ag-map">
+                        <div class="ag-map__origin">
+                            <span class="ag-node__kicker">Sintoma</span>
+                            <span class="ag-node__label">{symptomShort}</span>
+                        </div>
+                        <span class="ag-map__arrow">→</span>
+                        <div class="ag-map__suspects">
+                            <template for:each={renderMap} for:item="n">
+                                <div key={n.id} class={n.cssClass}>
+                                    <span class={n.markClass}></span>
+                                    <div class="ag-node__body">
+                                        <span class="ag-node__label">{n.label}</span>
+                                        <template lwc:if={n.hasDetail}>
+                                            <span class="ag-node__detail">{n.detail}</span>
+                                        </template>
+                                    </div>
                                 </div>
+                            </template>
+                            <template lwc:if={showSeeking}>
+                                <div class="ag-node ag-node--seeking">
+                                    <span class="ag-node__mark ag-node__mark--active"></span>
+                                    <div class="ag-node__body">
+                                        <span class="ag-node__label">decidindo próximo passo…</span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                        <span class="ag-map__arrow">→</span>
+                        <div class={causeClass}>
+                            <span class="ag-node__kicker">{causeLabel}</span>
+                            <template lwc:if={causeReached}>
+                                <span class="ag-node__label">identificada</span>
+                            </template>
+                            <template lwc:else>
+                                <span class="ag-node__label ag-node__label--muted">apurando…</span>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="ag-maplegend">
+                        <span class="ag-maplegend__item"><span class="ag-node__mark ag-node__mark--active"></span>examinando</span>
+                        <span class="ag-maplegend__item"><span class="ag-node__mark ag-node__mark--evidence"></span>evidência</span>
+                        <span class="ag-maplegend__item"><span class="ag-node__mark ag-node__mark--cleared"></span>descartado</span>
+                    </div>
+                    <template lwc:if={showThinking}>
+                        <div class="ag-now">
+                            <span class="ag-now__mark"></span>
+                            <span class="ag-now__text">{thinkingText}</span>
+                        </div>
+                    </template>
+                </section>
+            </template>
+
+            <div class="ag-work">
+                <!-- Exame (o artefato sob a lente: código, consulta, console) -->
+                <section class="ag-panel ag-panel--exam">
+                    <div class="ag-panel__head">Exame</div>
+                    <template lwc:if={hasScreen}>
+                        <div class="ag-screen">
+                            <div class="ag-screen__bar">
+                                <span class="ag-screen__title">{screenTitle}</span>
                             </div>
-                        </template>
-                        <template lwc:if={isRunning}>
-                            <div class="at-tl-item">
-                                <span class="at-tl-rail"></span>
-                                <span class="at-tl-dot at-tl-dot_live">•</span>
-                                <div class="at-tl-body at-tl-body_live">raciocinando…</div>
+                            <div class="ag-tabs">
+                                <template for:each={screenTabs} for:item="tab">
+                                    <button key={tab.id} data-id={tab.id} class={tab.cssClass}
+                                        onclick={handleSelectTab}>
+                                        <span class="at-tab__icon">{tab.icon}</span>{tab.label}
+                                    </button>
+                                </template>
                             </div>
-                        </template>
+                            <div class="at-screen__body">
+                                <template for:each={screenLines} for:item="ln">
+                                    <div key={ln.key} class={ln.cssClass}>
+                                        <span class="at-code__num">{ln.num}</span>
+                                        <span class="at-code__text">
+                                            <template for:each={ln.tokens} for:item="t">
+                                                <span key={t.key} class={t.cls}>{t.text}</span>
+                                            </template>
+                                            <template lwc:if={ln.showCursor}>
+                                                <span class="at-caret"></span>
+                                            </template>
+                                        </span>
+                                    </div>
+                                </template>
+                                <template lwc:if={hasConsole}>
+                                    <div class="at-console-out">{screenConsole}</div>
+                                </template>
+                            </div>
+                            <div class={screenStatusClass}>
+                                <span class="at-statusbar__dot"></span>
+                                <span class="at-statusbar__text">{screenStatus}</span>
+                                <span class="at-statusbar__file">{screenTitle}</span>
+                            </div>
+                        </div>
                     </template>
                     <template lwc:else>
-                        <p class="at-timeline__empty">Cada passo do raciocínio do agente aparece aqui — pensando, decidindo, vasculhando, achando.</p>
+                        <div class="ag-empty">O código, a consulta e o console do agente aparecem aqui — ao vivo — conforme ele examina cada evidência.</div>
                     </template>
-                </div>
-            </section>
-        </div>
+                </section>
 
-        <!-- Pergunta de esclarecimento (incidente vago) -->
-        <template lwc:if={hasQuestion}>
-            <div class="at-question">
-                <div class="at-question__head">🤔 O agente precisa de um esclarecimento</div>
-                <p class="at-question__text">{pendingQuestion}</p>
-                <div class="at-question__row">
-                    <lightning-input type="text" variant="label-hidden"
-                        class="at-question__input" placeholder="Responda aqui…"
-                        value={questionAnswer} onchange={handleAnswerChange}></lightning-input>
-                    <lightning-button label="Responder" variant="brand"
-                        onclick={handleAnswer}></lightning-button>
-                </div>
-            </div>
-        </template>
-
-        <!-- Card de laudo (conclusão) -->
-        <template lwc:if={hasSummary}>
-            <div class="at-diag">
-                <div class="at-diag__head"><span class="at-diag__badge">📋 Diagnóstico técnico</span></div>
-                <p class="at-diag__text">{summaryText}</p>
-            </div>
-        </template>
-
-        <!-- Impacto no negócio (linguagem de executivo) -->
-        <template lwc:if={hasImpact}>
-            <div class="at-impact">
-                <div class="at-impact__head"><span class="at-impact__badge">💼 Impacto no negócio</span></div>
-                <p class="at-impact__text">{impactText}</p>
-            </div>
-        </template>
-
-        <!-- Custo/uso desta investigação -->
-        <template lwc:if={hasCost}>
-            <div class="at-cost">💰 Custo desta investigação: {costText}</div>
-        </template>
-
-        <!-- Correção proposta -->
-        <template lwc:if={hasFix}>
-            <div class="at-fix">
-                <div class="at-fix__head">
-                    <span class="at-fix__badge">Correção proposta</span>
-                    <span class="at-fix__file">{fix.classe}</span>
-                </div>
-                <div class="at-fix__diff">
-                    <div class="at-fix__line at-fix__line_del">
-                        <span class="at-fix__sign">-</span><span>{fix.de}</span>
+                <!-- Registro da apuração (a trilha) -->
+                <section class="ag-panel ag-panel--log">
+                    <div class="ag-panel__head">Atividade</div>
+                    <div class="at-timeline">
+                        <template lwc:if={hasTimeline}>
+                            <template for:each={renderTimeline} for:item="entry">
+                                <div key={entry.key} class="at-tl-item">
+                                    <span class="at-tl-rail"></span>
+                                    <span class={entry.dotClass}></span>
+                                    <div class="at-tl-body">
+                                        <template lwc:if={entry.isText}>{entry.text}</template>
+                                        <template lwc:if={entry.isCode}>
+                                            <div class="at-code">
+                                                <button class="at-code__bar" data-key={entry.key}
+                                                    onclick={handleToggleCode}>
+                                                    <span class="at-code__caret">{entry.caret}</span>
+                                                    <span class="at-code__file">{entry.file}</span>
+                                                </button>
+                                                <template lwc:if={entry.open}>
+                                                    <div class="at-code__body">
+                                                        <template for:each={entry.lines} for:item="ln">
+                                                            <div key={ln.key} class="at-code__line">
+                                                                <span class="at-code__num">{ln.num}</span>
+                                                                <span class="at-code__text">
+                                                                    <template for:each={ln.tokens} for:item="t">
+                                                                        <span key={t.key} class={t.cls}>{t.text}</span>
+                                                                    </template>
+                                                                </span>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </template>
+                                        <template lwc:if={entry.isConsole}>
+                                            <div class="at-console-out">{entry.text}</div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                            <template lwc:if={isRunning}>
+                                <div class="at-tl-item">
+                                    <span class="at-tl-rail"></span>
+                                    <span class="at-tl-dot at-tl-dot_live"></span>
+                                    <div class="at-tl-body at-tl-body_live">apurando…</div>
+                                </div>
+                            </template>
+                        </template>
+                        <template lwc:else>
+                            <p class="ag-empty">Cada passo da apuração — decisão, ação, achado, descarte — fica registrado aqui.</p>
+                        </template>
                     </div>
-                    <div class="at-fix__line at-fix__line_add">
-                        <span class="at-fix__sign">+</span><span>{fix.para}</span>
-                    </div>
-                </div>
-                <p class="at-fix__why">{fix.porque}</p>
-
-                <template lwc:if={fixPending}>
-                    <div class="at-fix__actions">
-                        <lightning-button label="Autorizar correção" variant="brand"
-                            onclick={handleAuthorize}></lightning-button>
-                        <lightning-button label="Recusar" variant="neutral"
-                            class="slds-m-left_x-small" onclick={handleReject}></lightning-button>
-                    </div>
-                    <p class="at-fix__note">O agente propõe — nada é aplicado sem a sua autorização.</p>
-                </template>
-                <template lwc:if={fixValidating}>
-                    <p class="at-fix__decided at-fix__decided_ok">⏳ Validando a correção ao vivo — rodando a lógica corrigida…</p>
-                </template>
-                <template lwc:if={fixValidatedOk}>
-                    <p class="at-fix__decided at-fix__decided_ok">✅ Correção validada — {fix.validatedText} Aplicar continua sendo a sua decisão; o agente não aplica sozinho.</p>
-                </template>
-                <template lwc:if={fixValidatedFail}>
-                    <p class="at-fix__decided at-fix__decided_no">⚠️ {fix.validatedText}</p>
-                </template>
-                <template lwc:if={fixRejected}>
-                    <p class="at-fix__decided at-fix__decided_no">✋ Correção recusada. Nada foi alterado.</p>
-                </template>
+                </section>
             </div>
-        </template>
 
-        <!-- Capacidades usadas nesta investigação -->
-        <div class="at-caps">
-            <p class="at-pane__title">Capacidades do agente</p>
-            <div class="at-caps__grid">
-                <template for:each={capabilityPanel} for:item="cap">
-                    <span key={cap.name} class={cap.cssClass}>{cap.label}</span>
-                </template>
-            </div>
-        </div>
+            <!-- Diagnóstico -->
+            <template lwc:if={hasSummary}>
+                <section class="ag-verdict">
+                    <div class="ag-verdict__label">Diagnóstico</div>
+                    <p class="ag-verdict__cause">{summaryText}</p>
+                    <template lwc:if={hasImpact}>
+                        <div class="ag-verdict__impact">
+                            <span class="ag-kicker">Impacto no negócio</span>
+                            <p>{impactText}</p>
+                        </div>
+                    </template>
+                </section>
+            </template>
 
-        <!-- Histórico (memória institucional) -->
-        <template lwc:if={hasRecent}>
-            <div class="at-recent">
-                <p class="at-pane__title">Investigações recentes</p>
-                <div class="at-recent__list">
-                    <template for:each={recent} for:item="r">
-                        <div key={r.id} class="at-recent__item">
-                            <div class="at-recent__top">
-                                <span class="at-recent__name">{r.name}</span>
-                                <span class={r.areaClass}>{r.area}</span>
-                                <span class="at-recent__status">{r.status}</span>
-                                <span class="at-recent__meta">{r.meta}</span>
+            <!-- Correção proposta -->
+            <template lwc:if={hasFix}>
+                <section class="ag-fix">
+                    <div class="ag-fix__head">
+                        <span class="ag-kicker">Correção proposta</span>
+                        <span class="ag-fix__file">{fix.classe}</span>
+                    </div>
+                    <div class="ag-diff">
+                        <div class="ag-diff__line ag-diff__line--del"><span class="ag-diff__sign">−</span><span>{fix.de}</span></div>
+                        <div class="ag-diff__line ag-diff__line--add"><span class="ag-diff__sign">+</span><span>{fix.para}</span></div>
+                    </div>
+                    <p class="ag-fix__why">{fix.porque}</p>
+
+                    <template lwc:if={fixPending}>
+                        <div class="ag-fix__actions">
+                            <button class="ag-btn" onclick={handleAuthorize}>Autorizar</button>
+                            <button class="ag-btn ag-btn--ghost" onclick={handleReject}>Recusar</button>
+                        </div>
+                        <p class="ag-fix__note">O agente propõe. Nada é validado nem aplicado sem a sua decisão.</p>
+                    </template>
+                    <template lwc:if={fixValidating}>
+                        <p class="ag-fix__state">Validando ao vivo — rodando a lógica corrigida…</p>
+                    </template>
+                    <template lwc:if={fixValidatedOk}>
+                        <p class="ag-fix__state ag-fix__state--ok">Validada — {fix.validatedText}</p>
+                        <template lwc:if={showApplyButton}>
+                            <div class="ag-fix__actions">
+                                <button class="ag-btn ag-btn--danger" onclick={handleApply}>Aplicar no org (deploy)</button>
                             </div>
-                            <div class="at-recent__inc">{r.incidente}</div>
+                            <p class="ag-fix__note">Isto deploya a correção no código do org — só com o seu clique.</p>
+                        </template>
+                        <template lwc:if={fixApplying}>
+                            <p class="ag-fix__state">Aplicando no org (deploy ao vivo)…</p>
+                        </template>
+                        <template lwc:if={fixApplied}>
+                            <p class="ag-fix__state ag-fix__state--ok">{fix.appliedText}</p>
+                        </template>
+                        <template lwc:if={fixApplyFailed}>
+                            <p class="ag-fix__state ag-fix__state--no">{fix.appliedText}</p>
+                        </template>
+                    </template>
+                    <template lwc:if={fixValidatedFail}>
+                        <p class="ag-fix__state ag-fix__state--no">{fix.validatedText}</p>
+                    </template>
+                    <template lwc:if={fixRejected}>
+                        <p class="ag-fix__state ag-fix__state--no">Correção recusada. Nada foi alterado.</p>
+                    </template>
+                </section>
+            </template>
+        </template>
+
+        <!-- Investigações recentes -->
+        <template lwc:if={hasRecent}>
+            <section class="ag-cases">
+                <div class="ag-panel__head">Investigações recentes</div>
+                <div class="ag-caselist">
+                    <template for:each={recent} for:item="r">
+                        <div key={r.id} class="ag-caserow" data-id={r.id} onclick={handleToggleRecent}>
+                            <span class="ag-caserow__id">{r.name}</span>
+                            <template lwc:if={r.auto}><span class="ag-caserow__auto">auto</span></template>
+                            <span class={r.areaClass}>{r.area}</span>
+                            <span class={r.statusClass}>{r.status}</span>
+                            <template lwc:if={r.expanded}>
+                                <span class="ag-caserow__inc ag-caserow__inc--full">{r.incidenteFull}</span>
+                            </template>
+                            <template lwc:else>
+                                <span class="ag-caserow__inc">{r.incidente}</span>
+                            </template>
+                            <span class="ag-caserow__meta">{r.meta}</span>
                         </div>
                     </template>
                 </div>
-            </div>
+            </section>
         </template>
     </div>
 </template>

@@ -49,6 +49,18 @@ private class ClaudeServiceTest {
     }
 
     @isTest
+    static void reason_devolveToolUse() {
+        Test.setMock(HttpCalloutMock.class,
+            new AgentTraceHttpMock('inspecionar_codigo', new Map<String, Object>{ 'alvo' => 'CalculadoraPedido' }));
+        Test.startTest();
+        Map<String, Object> r = ClaudeService.reason(
+            new List<Object>{ new Map<String, Object>{ 'role' => 'user', 'content' => 'incidente' } });
+        Test.stopTest();
+        System.assertEquals('inspecionar_codigo', r.get('toolName'));
+        System.assertEquals('tool_use', r.get('stopReason'));
+    }
+
+    @isTest
     static void gerarVerificacao_retornaCodigoSemCerca() {
         Test.setMock(HttpCalloutMock.class,
             new AgentTraceHttpMock('```apex\nSystem.assertEquals(10, 10);\n```'));

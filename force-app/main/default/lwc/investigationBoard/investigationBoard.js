@@ -2,7 +2,9 @@ import { LightningElement } from 'lwc';
 import { subscribe, unsubscribe, onError } from 'lightning/empApi';
 import startInvestigation from '@salesforce/apex/InvestigationController.start';
 import validarCorrecao from '@salesforce/apex/InvestigationController.validarCorrecao';
+import aplicarCorrecao from '@salesforce/apex/InvestigationController.aplicarCorrecao';
 import getRecentInvestigations from '@salesforce/apex/InvestigationController.getRecentInvestigations';
+import rodarVarredura from '@salesforce/apex/InvestigationController.rodarVarredura';
 
 const ICON_BY_KIND = {
     pensando: '🧠', decisao: '🎯', acao: '🔍', achado: '⚠️', descartado: '✔️', conclusao: '📋'
@@ -58,6 +60,10 @@ export default class InvestigationBoard extends LightningElement {
     impactText;
     recent = [];
 
+    // Sentinela (varredura proativa).
+    sweepText;
+    sweeping = false;
+
     // Custo/uso desta investigação; e pergunta de esclarecimento (incidente vago).
     costText;
     pendingQuestion;
@@ -78,7 +84,28 @@ export default class InvestigationBoard extends LightningElement {
     // Correção PROPOSTA pelo agente — espera a decisão humana.
     fix;
 
+    // Mapa de investigação: sintoma -> capacidades examinadas (acende/apaga/descarta) -> causa.
+    // Montado só dos eventos que já disparam (tool = nó nasce; narração achado/descartado = resolve).
+    symptomText = '';
+    mapNodes = [];
+    causeReached = false;
+
     get hasSummary() { return !!this.summaryText; }
+    get hasCase() { return this.isRunning || this.hasSummary || this.hasScreen || this.hasTimeline; }
+    get statusLabel() {
+        if (this.isRunning) { return 'Apurando'; }
+        if (this.hasSummary) { return 'Diagnóstico emitido'; }
+        return 'Aguardando incidente';
+    }
+    get statusClass() {
+        if (this.isRunning) { return 'ag-status ag-status--live'; }
+        if (this.hasSummary) { return 'ag-status ag-status--done'; }
+        return 'ag-status';
+    }
+    get usedToolsLabel() {
+        if (!this.usedTools.length) { return ''; }
+        return CAPS.filter((c) => this.usedTools.includes(c.name)).map((c) => c.label).join(', ');
+    }
     get hasImpact() { return !!this.impactText; }
     get hasCost() { return !!this.costText; }
     get hasQuestion() { return !!this.pendingQuestion; }
@@ -98,6 +125,10 @@ export default class InvestigationBoard extends LightningElement {
     get fixValidatedFail() {
         return this.fix && this.fix.authorized && this.fix.validated === false && !this.fix.validating;
     }
+    get showApplyButton() { return this.fixValidatedOk && !this.fix.applying && this.fix.applied == null; }
+    get fixApplying() { return this.fix && this.fix.applying; }
+    get fixApplied() { return this.fix && this.fix.applied === true; }
+    get fixApplyFailed() { return this.fix && this.fix.applied === false; }
     get investigateDisabled() {
         return this.isRunning || !this.incidentText || this.incidentText.trim().length === 0;
     }
@@ -118,6 +149,37 @@ export default class InvestigationBoard extends LightningElement {
             icon: a.kind === 'test' ? '⚡' : (a.kind === 'log' ? '📜' : '{ }'),
             cssClass: a.id === this.activeId ? 'at-tab at-tab_active' : 'at-tab'
         }));
+    }
+
+    // --- Mapa de investigação ---
+    get hasMap() { return this.mapNodes.length > 0 || this.isRunning; }
+    get symptomShort() { return this.short(this.symptomText, 90); }
+
+    // Cada nó, já com a classe do seu estado (active/evidence/cleared/examined).
+    get renderMap() {
+        return this.mapNodes.map((n) => ({
+            id: n.id,
+            label: n.label,
+            detail: this.short(n.detail, 84),
+            hasDetail: !!n.detail,
+            cssClass: 'ag-node ag-node--' + n.state,
+            markClass: 'ag-node__mark ag-node__mark--' + n.state
+        }));
+    }
+    get causeClass() {
+        return this.causeReached ? 'ag-node ag-node--cause' : 'ag-node ag-node--cause ag-node--pending';
+    }
+    get causeLabel() { return this.causeReached ? 'Causa raiz' : 'Causa'; }
+    // "Decidindo próximo passo" só quando nada está sendo examinado agora.
+    get showSeeking() {
+        if (!this.isRunning || this.causeReached) { return false; }
+        const last = this.mapNodes[this.mapNodes.length - 1];
+        return !last || last.state !== 'active';
+    }
+
+    capLabel(name) {
+        const c = CAPS.find((x) => x.name === name);
+        return c ? c.label : name;
     }
 
     get screenStatus() {
@@ -176,26 +238,67 @@ export default class InvestigationBoard extends LightningElement {
         onError((error) => {
             // eslint-disable-next-line no-console
             console.error('AgentTrace empApi erro: ', JSON.stringify(error));
+            this.resubscribe();
         });
+    }
+
+    // Reassina o canal se a conexão cair (abas longas perdem a assinatura empApi).
+    resubscribe() {
+        try { unsubscribe(this.subscription, () => {}); } catch (e) { /* conexão já morta */ }
+        subscribe(this.channelName, -1, (message) => this.handleEvent(message)).then(
+            (response) => { this.subscription = response; }
+        );
     }
 
     loadRecent() {
         getRecentInvestigations()
             .then((rows) => {
-                this.recent = (rows || []).map((r) => ({
-                    id: r.Name,
-                    name: r.Name,
-                    incidente: this.short(r.Incidente__c, 90),
-                    area: r.Area__c || '—',
-                    status: r.Status__c || '—',
-                    areaClass: 'at-badge at-badge_' + (r.Area__c || 'x'),
-                    meta: (r.Passos__c || 0) + ' passos · ' + (r.Duracao_Seg__c || 0) + 's'
-                }));
+                this.recent = (rows || []).map((r) => {
+                    const isAlerta = r.Status__c === 'Alerta';
+                    const auto = (r.Incidente__c || '').indexOf('Varredura automática') === 0;
+                    let meta = (r.Passos__c || 0) + ' passos · ' + (r.Duracao_Seg__c || 0) + 's';
+                    if (r.Tokens__c) { meta += ' · ' + r.Tokens__c + ' tokens · ~$' + (r.Custo_USD__c || 0); }
+                    return {
+                        id: r.Name,
+                        name: r.Name,
+                        auto,
+                        expanded: false,
+                        incidente: this.short(r.Incidente__c, 110),
+                        incidenteFull: r.Incidente__c || '',
+                        area: r.Area__c || '—',
+                        status: r.Status__c || '—',
+                        areaClass: 'at-badge at-badge_' + (r.Area__c || 'x'),
+                        statusClass: isAlerta ? 'at-recent__status at-recent__status_alert' : 'at-recent__status',
+                        meta
+                    };
+                });
             })
             .catch(() => { this.recent = []; });
     }
 
     short(s, n) { if (!s) { return ''; } return s.length > n ? s.substring(0, n) + '…' : s; }
+
+    handleToggleRecent(event) {
+        const id = event.currentTarget.dataset.id;
+        this.recent = this.recent.map((x) => x.id === id ? { ...x, expanded: !x.expanded } : x);
+    }
+
+    get hasSweep() { return !!this.sweepText; }
+    handleSweep() {
+        this.sweeping = true;
+        this.sweepText = 'Varrendo o org… (sinais de saúde)';
+        rodarVarredura()
+            .then((res) => {
+                this.sweepText = res;
+                this.sweeping = false;
+                // eslint-disable-next-line @lwc/lwc/no-async-operation
+                setTimeout(() => this.loadRecent(), 3500);
+            })
+            .catch((e) => {
+                this.sweepText = 'Falha na varredura: ' + this.errMsg(e);
+                this.sweeping = false;
+            });
+    }
     disconnectedCallback() {
         this.handleUnsubscribe();
         this.clearTypeTimer();
@@ -232,11 +335,15 @@ export default class InvestigationBoard extends LightningElement {
             if (!this.usedTools.includes(p.Message__c)) {
                 this.usedTools = [...this.usedTools, p.Message__c];
             }
+            this.mapAddNode(p.Message__c);
             return;
         }
         if (type === 'narration') {
             this.thinkingText = p.Payload__c;
             this.pushStep(p.Message__c, p.Payload__c);
+            // achado = virou evidência (lead quente); descartado = suspeito eliminado.
+            if (p.Message__c === 'achado') { this.mapResolveLast('evidence', p.Payload__c); }
+            else if (p.Message__c === 'descartado') { this.mapResolveLast('cleared', p.Payload__c); }
             return;
         }
         if (type === 'code') {
@@ -264,14 +371,43 @@ export default class InvestigationBoard extends LightningElement {
             }
             return;
         }
+        if (type === 'fix_applied') {
+            if (this.fix) {
+                this.fix = { ...this.fix, applying: false,
+                    applied: (p.Message__c === 'ok'), appliedText: p.Payload__c };
+            }
+            return;
+        }
         if (type === 'summary') {
             this.pushStep('conclusao', p.Payload__c);
             this.summaryText = p.Payload__c;
             this.isRunning = false;
+            this.mapReachCause();
             // Recarrega o histórico depois que a gravação commitou.
             // eslint-disable-next-line @lwc/lwc/no-async-operation
             setTimeout(() => this.loadRecent(), 2500);
         }
+    }
+
+    // --- Mapa: nasce um nó por capacidade escolhida; resolve com a voz do agente ---
+    mapAddNode(cap) {
+        // Fecha o nó anterior que ainda estava "ativo" sem veredito explícito.
+        const nodes = this.mapNodes.map((n) =>
+            n.state === 'active' ? { ...n, state: 'examined' } : n);
+        this._seq += 1;
+        nodes.push({ id: 'n' + this._seq, cap, label: this.capLabel(cap), state: 'active', detail: '' });
+        this.mapNodes = nodes;
+    }
+    mapResolveLast(state, detail) {
+        if (!this.mapNodes.length) { return; }
+        const last = this.mapNodes.length - 1;
+        this.mapNodes = this.mapNodes.map((n, i) =>
+            i === last ? { ...n, state, detail: detail || n.detail } : n);
+    }
+    mapReachCause() {
+        this.causeReached = true;
+        this.mapNodes = this.mapNodes.map((n) =>
+            n.state === 'active' ? { ...n, state: 'examined' } : n);
     }
 
     pushStep(kind, text) {
@@ -367,7 +503,8 @@ export default class InvestigationBoard extends LightningElement {
             this.fix = {
                 classe: c.classe || '(classe)', de: c.de || '', para: c.para || '',
                 porque: c.porque || '', decided: false, authorized: false,
-                validating: false, validated: null, validatedText: ''
+                validating: false, validated: null, validatedText: '',
+                applying: false, applied: null, appliedText: ''
             };
         } catch (e) {
             this.fix = undefined;
@@ -384,6 +521,19 @@ export default class InvestigationBoard extends LightningElement {
             .catch((e) => {
                 this.fix = { ...this.fix, validating: false, validated: false,
                     validatedText: 'Não consegui iniciar a validação: ' + this.errMsg(e) };
+            });
+    }
+
+    handleApply() {
+        // Fecha o ciclo de verdade: deploya a correção validada no org.
+        this.fix = { ...this.fix, applying: true, applied: null, appliedText: '' };
+        const correcao = JSON.stringify({
+            classe: this.fix.classe, de: this.fix.de, para: this.fix.para, porque: this.fix.porque
+        });
+        aplicarCorrecao({ investigationId: this.investigationId, correcaoJson: correcao })
+            .catch((e) => {
+                this.fix = { ...this.fix, applying: false, applied: false,
+                    appliedText: 'Não consegui iniciar o deploy: ' + this.errMsg(e) };
             });
     }
 
@@ -404,6 +554,7 @@ export default class InvestigationBoard extends LightningElement {
     async handleInvestigate() {
         this.resetBoard();
         this.lastIncident = this.incidentText;
+        this.symptomText = this.incidentText;
         this.isRunning = true;
         this.thinkingText = 'Recebi o incidente. Deixa eu analisar…';
         this.pushStep('pensando', 'Recebi o incidente. Deixa eu analisar…');
@@ -425,6 +576,9 @@ export default class InvestigationBoard extends LightningElement {
         this.timeline = [];
         this.usedTools = [];
         this.fix = undefined;
+        this.symptomText = '';
+        this.mapNodes = [];
+        this.causeReached = false;
         this.thinkingText = 'Analisando o incidente…';
         this.artifacts = [];
         this.activeId = undefined;

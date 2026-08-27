@@ -2,6 +2,10 @@
 <PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
     <label>AgentTrace Access</label>
     <hasActivationRequired>false</hasActivationRequired>
+    <applicationVisibilities>
+        <application>AgentTrace</application>
+        <visible>true</visible>
+    </applicationVisibilities>
     <classAccesses>
         <apexClass>InvestigationController</apexClass>
         <enabled>true</enabled>
@@ -133,6 +137,10 @@
     </fieldPermissions>
     <tabSettings>
         <tab>AgentTrace_Board</tab>
+        <visibility>Visible</visibility>
+    </tabSettings>
+    <tabSettings>
+        <tab>Investigacao__c</tab>
         <visibility>Visible</visibility>
     </tabSettings>
 </PermissionSet>
