@@ -1,61 +1,111 @@
 # AgentTrace
 
-**Um agente de diagnóstico autônomo para orgs Salesforce.** Você descreve um incidente técnico em linguagem natural; o agente **decide sozinho** o que investigar, **abre o código real**, **prova a causa executando um teste ao vivo**, **confirma o impacto nos dados** — e **propõe a correção**, que só é aplicada com a sua autorização. Quando o problema está fora do alcance dele (rede/proxy externo), ele diz isso com honestidade em vez de inventar. Todo o raciocínio aparece **ao vivo, passo a passo**, como uma tela compartilhada.
+**An autonomous diagnostic agent that runs inside a Salesforce org.** You describe a technical
+incident in plain language. The agent decides on its own what to investigate, opens the actual Apex
+source, proves the cause by writing and running a test live, confirms the blast radius against real
+data, and proposes a fix — which is applied only if you authorize it. When the problem is genuinely
+out of its reach (an external network or proxy failure), it says so instead of inventing a cause.
+All of its reasoning appears live, step by step, as if it were sharing its screen.
 
-Construído sobre **Salesforce (Apex + LWC)** e a **Claude API** (function calling nativo), num org de desenvolvedor real.
+Built on **Salesforce (Apex + LWC)** and the **Claude API** with native function calling, in a real
+Developer Edition org.
 
 ---
 
-## O que ele faz (4 cenários de demo)
+## What it does
 
-| Incidente | O que o agente faz |
+| Incident | What the agent does |
 |---|---|
-| Desconto errado em pedidos de R$100 | lista classes → abre o código → **escreve e roda um teste** que prova o bug → propõe a correção `>` → `>=` (você autoriza → ele **valida** a correção ao vivo) |
-| Integração de pagamento caiu | inspeciona a classe → **dispara uma sonda de conexão ao vivo** → `Unauthorized endpoint` → localiza como config no org |
-| Sincronização noturna parou | **lê os logs** → `407 Proxy`/timeout recorrente → conclui honesto: "é externo, fora do meu alcance" (sem inventar correção) |
-| "Qual o tamanho do estrago?" | cruza **código → schema → dados reais** (`SELECT COUNT()`) → confirma **12 pedidos afetados** + traduz em **impacto de negócio** |
+| Wrong discount applied on R$100 orders | lists classes → opens the source → **writes and runs a test** that proves the bug → proposes the `>` → `>=` fix (you authorize → it **validates** the fix live) |
+| Payment integration stopped working | inspects the class → **fires a live connection probe** → `Unauthorized endpoint` → locates it as org configuration, not code |
+| Nightly sync stopped | **reads the debug logs** → recurring `407 Proxy` / timeout → concludes honestly: "this is external, outside my reach" — and proposes no fix |
+| "How big is the damage?" | crosses **code → schema → real data** (`SELECT COUNT()`) → confirms **12 affected orders** → translates it into business impact |
 
-E se você pedir dados pessoais, a **guarda de privacidade** recusa e oferece uma contagem agregada.
-
----
-
-## Como funciona (arquitetura)
-
-```
-[Tela LWC] → InvestigationController.start → [Queueable: InvestigationOrchestrator]  ← o LOOP
-                                                    |            ^
-                          (tool_use nativo)  chama  |            | (tool_result)
-                                                    v            |
-                                            [ClaudeService] → Claude API
-                                                    |
-                       executa a FERRAMENTA (código / dados / integração / logs / ...)
-                                                    |
-                            publica um Platform Event por passo (PublishImmediately)
-                                                    ↓
-                                   [Tela reage AO VIVO — empApi]
-```
-
-- **Loop de raciocínio com tool_use nativo** (function calling da Anthropic): a Claude escolhe uma ferramenta, o Apex executa e devolve o `tool_result`, e a conversa segue até ela chamar `concluir`.
-- **13 capacidades** que o agente escolhe adaptativamente: inspecionar/testar/buscar código, sondar integração, consultar dados (SOQL), schema, debug logs, jobs, config, automações, limites.
-- **Roda numa transação só** (contorna o limite de 5 níveis de Queueable do Dev Edition) e **transmite ao vivo** via Platform Events `PublishImmediately`.
-- **Ação com permissão**: o agente propõe e **prova** a correção; aplicar é decisão humana.
-- **Sistema de registro**: cada investigação vira um `Investigacao__c` (causa, capacidades, passos, duração, tokens, custo).
-
-## Segurança e responsabilidade
-
-- **Chave da API no cofre** (External/Named Credential) — o código Apex nunca a enxerga.
-- **Guarda de privacidade determinística** — recusa qualquer SOQL que toque em PII; usa contagem/agregado.
-- **Só leitura por padrão** — testar código é sem DML; a sonda de integração é só GET.
-
-## Qualidade
-
-- **41 testes Apex, ~88% de cobertura.**
-- **Harness de avaliação (evals):** `sf apex run --file scripts/apex/eval.apex` roda o agente contra cenários conhecidos e devolve um placar (**5/5**) — verificação sistemática, não anedota.
+Ask it for personal data and the **privacy guard** refuses, offering an aggregate count instead.
 
 ---
 
-## Como isto mapeia "AI Builder"
+## How it works
 
-Tool calls + reasoning model + ação real, com guardrails, avaliação e consciência de custo — o formato de um sistema de IA de produção, num domínio focado e totalmente dominável.
+```
+[LWC board] → InvestigationController.start
+                      │
+                      ▼  enqueue once
+   ┌──────────────────────────────────────────────────────────────┐
+   │  InvestigationOrchestrator  —  ONE Queueable transaction      │
+   │                                                              │
+   │   ┌──▶ ClaudeService ──────────▶ Claude API                  │
+   │   │        ▲                        │                        │
+   │   │        │  tool_result           │  tool_use              │
+   │   │        │                        ▼                        │
+   │   │    execute the TOOL (source · data · integration · logs) │
+   │   │        │                                                 │
+   │   │        └── publish Investigation_Step__e                 │
+   │   │              (publishBehavior = PublishImmediately)      │
+   │   └──── loop, up to 8 iterations, until `concluir`           │
+   └──────────────────────────────────────────────────────────────┘
+                      │
+                      ▼  empApi subscription
+             [LWC board reacts LIVE, step by step]
+```
 
-*Projeto de portfólio, construído solo e iterado num org real. Documentação de arquitetura e decisões em `ARQUITETURA.md` e `DECISOES.md`.*
+- **Reasoning loop on native `tool_use`** (Anthropic function calling): the model picks a tool, Apex
+  executes it and returns the `tool_result`, and the conversation continues until the model calls
+  `concluir`.
+- **13 tools** the agent selects between adaptively: inspect / test / search source, probe an
+  integration, query data (SOQL), read schema, read debug logs, check failed jobs, recent config
+  changes, automations and org limits.
+- **Reading and running real Apex** goes through the Tooling API over a Named Credential — SOQL
+  against `ApexClass` for source, `executeAnonymous` for the live, throwaway verification.
+- **Action requires permission**: the agent proposes and *proves* a fix; applying it is a human
+  decision, and authorizing runs `FixValidator` against the change before `CodeDeployer` ships it.
+- **Every investigation is recorded** as an `Investigacao__c` — root cause, tools used, steps,
+  duration, tokens and cost.
+
+### The constraint worth reading about
+
+The loop first ran as a **chain of Queueable jobs**, one per reasoning step. Developer Edition caps
+a Queueable chain at five levels, so any investigation deeper than five steps died at the sixth with
+`System.LimitException: Maximum stack depth has been reached` and never concluded.
+
+Rewriting it as a loop inside a **single transaction** removed the limit and ran roughly 3× faster —
+but it broke the live UI, because a platform event published the normal way is only delivered after
+its transaction commits, and this transaction now stayed open for the whole investigation. The fix
+is `publishBehavior = PublishImmediately`, the one publish mode that escapes an uncommitted
+transaction. One transaction, every step still streamed live.
+
+## Safety
+
+- **The API key lives in the vault** (External / Named Credential) — Apex never sees it.
+- **Deterministic privacy guard** — refuses any SOQL touching PII fields and answers with an
+  aggregate instead. It is a hard-coded token check, not a model instruction, so it cannot be
+  prompted away.
+- **Read-only by default** — `testar_codigo` never performs DML; the integration probe is GET only.
+
+## Quality
+
+- **52 Apex test methods across 12 test classes**, ~88% coverage.
+- **Eval harness:** `sf apex run --file scripts/apex/eval.apex` runs the agent against known
+  scenarios and returns a score (**5/5**) — systematic verification rather than a one-off demo.
+
+## Architecture decisions
+
+The decisions behind this design, with the alternatives rejected and why, are recorded in
+[DECISIONS.md](DECISIONS.md).
+
+## Running it
+
+Requires a Salesforce org with the Tooling API reachable through a Named Credential, and an
+Anthropic API key stored in the `Anthropic` External Credential.
+
+```
+sf org login web --alias agenttrace
+sf project deploy start --target-org agenttrace
+sf apex run --file scripts/apex/seed-demo.apex --target-org agenttrace
+```
+
+Then open the **AgentTrace** app and describe an incident.
+
+---
+
+*Portfolio project, built solo and iterated against a real org.*
